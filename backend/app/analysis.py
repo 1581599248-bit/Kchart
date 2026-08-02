@@ -31,7 +31,7 @@ from . import indicators
 from . import patterns as pat_mod
 from . import pivots as piv_mod
 
-ANALYSIS_VERSION = "analysis_v4.5"   # 分析算法版本：改动识别/标注/结论逻辑时递增，缓存键引用
+ANALYSIS_VERSION = "analysis_v4.6"   # 分析算法版本：改动识别/标注/结论逻辑时递增，缓存键引用
 
 DIV_STAR_AGE = 40         # 背离确认后多少根内仍给 star（已废弃，保留兼容）
 DENSITY_WINDOW = 10       # 密度控制窗口（根）
@@ -54,7 +54,9 @@ def _indicator_signals(d: pd.DataFrame) -> list[dict]:
     - 进入信号：RSI6 当根上穿 90 = 超买 / 下穿 10 = 超卖（当根收盘即知，绝不后置到转折点）；
     - 衰竭/修复确认：RSI6 跌回 88 下方（超买衰竭）/ 升回 12 上方（超卖修复），
       仅当本轮区间 RSI 极值足够极端（≥93 / ≤7）才标注；88/12 回差防阈值抖动；
-    - 星标：进入信号当根 RSI ≥95 / ≤5；衰竭/修复信号区间极值 ≥96 / ≤4。
+    - 强趋势过滤：ADX≥25 且价在 MA60 同侧时不标注——强升势"超买一路"、强跌势"超卖一路"
+      是趋势强度表现而非反转信号（中际旭创式单边行情逐次标看跌=持续误导）；
+    - 星标：RSI 信号一律不打星（星标只留结构突破/破位与谐波反转）。
     每个超买/超卖波段只标一进一出；不使用 zigzag 转折点定位（那是未来函数）。
     MACD/KDJ 交叉等高频弱信号不上图；背离由 divergence.py 单独输出。"""
     n = len(d)
@@ -62,6 +64,14 @@ def _indicator_signals(d: pd.DataFrame) -> list[dict]:
     high = d["high"].to_numpy(dtype=float)
     low = d["low"].to_numpy(dtype=float)
     ma20 = d["MA20"].to_numpy(dtype=float)
+    close = d["close"].to_numpy(dtype=float)
+    adx = d["ADX"].to_numpy(dtype=float)
+    ma60 = d["MA60"].to_numpy(dtype=float)
+    # 强趋势过滤：ADX≥25 且价在 MA60 同侧时，超买（强升势）/超卖（强跌势）
+    # 是趋势强度表现而非反转信号——强势单边会"超买/超卖一路"，逐次标注=持续误导，压掉
+    with np.errstate(invalid="ignore"):
+        strong_up = (adx >= 25) & (close > ma60)
+        strong_dn = (adx >= 25) & (close < ma60)
     ev: list[dict] = []
     ob_peak = ob_hi = None        # 当前超买波段：RSI 峰值 / 期间最高价
     os_trough = os_lo = None      # 当前超卖波段：RSI 谷值 / 期间最低价
@@ -74,16 +84,17 @@ def _indicator_signals(d: pd.DataFrame) -> list[dict]:
         # ---- 超买波段 ----
         if ob_peak is None and r0 < 90 <= r1:            # 新进超买区
             ob_peak, ob_hi = r1, float(high[i])
-            ev.append({"bar_idx": i, "time": _date_str(d, i), "price": float(high[i]),
-                       "kind": "indicator", "label": "RSI6超买",
-                       "direction": "bear", "star": False,
-                       "detail": (f"RSI6={r1:.0f} 上穿 90 进入超买区，短线过热、追高需谨慎；"
-                                  f"RSI 跌回 90 下方为衰竭确认，回踩 MA20{m_txt} 不破则趋势未坏"),
-                       "_score": 58, "_grp": "rsi_ob_in"})
+            if not strong_up[i]:                         # 强升势中的超买=强度，不标看跌
+                ev.append({"bar_idx": i, "time": _date_str(d, i), "price": float(high[i]),
+                           "kind": "indicator", "label": "RSI6超买",
+                           "direction": "bear", "star": False,
+                           "detail": (f"RSI6={r1:.0f} 上穿 90 进入超买区，短线过热、追高需谨慎；"
+                                      f"RSI 跌回 90 下方为衰竭确认，回踩 MA20{m_txt} 不破则趋势未坏"),
+                           "_score": 58, "_grp": "rsi_ob_in"})
         elif ob_peak is not None and r1 >= 90:           # 波段延续
             ob_peak, ob_hi = max(ob_peak, r1), max(ob_hi, float(high[i]))
         elif ob_peak is not None and r1 < 88:            # 衰竭确认（跌出超买区）
-            if ob_peak >= 93:
+            if ob_peak >= 93 and not strong_up[i]:       # 强升势中跌出超买区不等于衰竭
                 ev.append({"bar_idx": i, "time": _date_str(d, i), "price": float(high[i]),
                            "kind": "indicator", "label": "RSI6超买衰竭",
                            "direction": "bear", "star": False,
@@ -96,16 +107,17 @@ def _indicator_signals(d: pd.DataFrame) -> list[dict]:
         # ---- 超卖波段 ----
         if os_trough is None and r0 > 10 >= r1:          # 新进超卖区
             os_trough, os_lo = r1, float(low[i])
-            ev.append({"bar_idx": i, "time": _date_str(d, i), "price": float(low[i]),
-                       "kind": "indicator", "label": "RSI6超卖",
-                       "direction": "bull", "star": False,
-                       "detail": (f"RSI6={r1:.0f} 下穿 10 进入超卖区，杀跌过度；"
-                                  f"RSI 升回 10 上方为修复确认，反抽 MA20{m_txt} 不过则弱势未改"),
-                       "_score": 58, "_grp": "rsi_os_in"})
+            if not strong_dn[i]:                         # 强跌势中的超卖=弱势延续，不标看多
+                ev.append({"bar_idx": i, "time": _date_str(d, i), "price": float(low[i]),
+                           "kind": "indicator", "label": "RSI6超卖",
+                           "direction": "bull", "star": False,
+                           "detail": (f"RSI6={r1:.0f} 下穿 10 进入超卖区，杀跌过度；"
+                                      f"RSI 升回 10 上方为修复确认，反抽 MA20{m_txt} 不过则弱势未改"),
+                           "_score": 58, "_grp": "rsi_os_in"})
         elif os_trough is not None and r1 <= 10:         # 波段延续
             os_trough, os_lo = min(os_trough, r1), min(os_lo, float(low[i]))
         elif os_trough is not None and r1 > 12:          # 修复确认（升出超卖区）
-            if os_trough <= 7:
+            if os_trough <= 7 and not strong_dn[i]:      # 强跌势中升出超卖区不等于企稳
                 ev.append({"bar_idx": i, "time": _date_str(d, i), "price": float(low[i]),
                            "kind": "indicator", "label": "RSI6超卖修复",
                            "direction": "bull", "star": False,
