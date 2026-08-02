@@ -31,7 +31,7 @@ from . import indicators
 from . import patterns as pat_mod
 from . import pivots as piv_mod
 
-ANALYSIS_VERSION = "analysis_v4.4"   # 分析算法版本：改动识别/标注/结论逻辑时递增，缓存键引用
+ANALYSIS_VERSION = "analysis_v4.5"   # 分析算法版本：改动识别/标注/结论逻辑时递增，缓存键引用
 
 DIV_STAR_AGE = 40         # 背离确认后多少根内仍给 star（已废弃，保留兼容）
 DENSITY_WINDOW = 10       # 密度控制窗口（根）
@@ -44,7 +44,7 @@ DIV_MIN_IND_REL = 0.15        # 明显背离：指标反差（相对较大值）
 DIV_MIN_IND_ABS_PCT = 0.002   # 明显背离：DIF/DEA 反差绝对下限（占价格比例）
 _MAJOR_PAT_KINDS = {"double_bottom", "double_top", "triple_bottom",
                     "head_shoulders_bottom", "head_shoulders_top", "arc_bottom"}  # 主要反转结构
-STAR_RECENT_BARS = 250    # 历史结构星标保鲜期（根）：过期的已确认结构降为小号标记，避免满屏金星
+STAR_RECENT_BARS = 250    # （已废弃）历史结构星标保鲜期：现口径为已确认突破/破位一律打星，保留常量兼容
 
 
 # ---------------- 指标/趋势信号 ----------------
@@ -569,10 +569,8 @@ def _build_annotations(d: pd.DataFrame, pats, divs, fib, harms, ind_sigs) -> lis
             or lv.get("upper_now") or lv.get("lower") or lv.get("lower_now") \
             or lv.get("c_low") or lv.get("arc_low") or lv.get("flag_upper") \
             or lv.get("wave3_top") or close
-        # 星标口径：只有「已确认的结构突破/破位」才打星（构筑中不打星）；
-        # 时效上只留活跃结构或近期确认事件
-        star_pat = (e["confirm_idx"] is not None) \
-            and (bool(e.get("active", True)) or int(bar) >= asof - STAR_RECENT_BARS)
+        # 星标口径：所有已确认的结构突破/破位一律打星（含历史区段；构筑中不打星）
+        star_pat = e["confirm_idx"] is not None
         fwd = _pat_forward(e)
         a = {"bar_idx": int(bar), "time": _date_str(d, bar), "price": float(price),
              "kind": "pattern", "label": _brk_label(e),
