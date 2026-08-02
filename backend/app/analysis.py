@@ -31,7 +31,7 @@ from . import indicators
 from . import patterns as pat_mod
 from . import pivots as piv_mod
 
-ANALYSIS_VERSION = "analysis_v4.1"   # 分析算法版本：改动识别/标注/结论逻辑时递增，缓存键引用
+ANALYSIS_VERSION = "analysis_v4.2"   # 分析算法版本：改动识别/标注/结论逻辑时递增，缓存键引用
 
 DIV_STAR_AGE = 40         # 背离确认后多少根内仍给 star（已废弃，保留兼容）
 DENSITY_WINDOW = 10       # 密度控制窗口（根）
@@ -51,10 +51,10 @@ STAR_RECENT_BARS = 250    # 历史结构星标保鲜期（根）：过期的已�
 
 def _indicator_signals(d: pd.DataFrame) -> list[dict]:
     """RSI6 超买/超卖（全历史，严格因果、无未来函数）：
-    - 进入信号：RSI6 当根上穿 80 = 超买 / 下穿 20 = 超卖（当根收盘即知，绝不后置到转折点）；
-    - 衰竭/修复确认：RSI6 跌回 78 下方（超买衰竭）/ 升回 22 上方（超卖修复），
-      仅当本轮区间 RSI 极值足够极端（≥85 / ≤15）才标注；78/22 回差防阈值抖动；
-    - 星标：进入信号当根 RSI ≥88 / ≤12；衰竭/修复信号区间极值 ≥90 / ≤10。
+    - 进入信号：RSI6 当根上穿 90 = 超买 / 下穿 10 = 超卖（当根收盘即知，绝不后置到转折点）；
+    - 衰竭/修复确认：RSI6 跌回 88 下方（超买衰竭）/ 升回 12 上方（超卖修复），
+      仅当本轮区间 RSI 极值足够极端（≥93 / ≤7）才标注；88/12 回差防阈值抖动；
+    - 星标：进入信号当根 RSI ≥95 / ≤5；衰竭/修复信号区间极值 ≥96 / ≤4。
     每个超买/超卖波段只标一进一出；不使用 zigzag 转折点定位（那是未来函数）。
     MACD/KDJ 交叉等高频弱信号不上图；背离由 divergence.py 单独输出。"""
     n = len(d)
@@ -72,48 +72,48 @@ def _indicator_signals(d: pd.DataFrame) -> list[dict]:
         m = ma20[i]
         m_txt = "" if np.isnan(m) else f"（{m:.2f}）"
         # ---- 超买波段 ----
-        if ob_peak is None and r0 < 80 <= r1:            # 新进超买区
+        if ob_peak is None and r0 < 90 <= r1:            # 新进超买区
             ob_peak, ob_hi = r1, float(high[i])
             ev.append({"bar_idx": i, "time": _date_str(d, i), "price": float(high[i]),
                        "kind": "indicator", "label": "RSI6超买",
-                       "direction": "bear", "star": bool(r1 >= 88),
-                       "detail": (f"RSI6={r1:.0f} 上穿 80 进入超买区，短线过热、追高需谨慎；"
-                                  f"RSI 跌回 80 下方为衰竭确认，回踩 MA20{m_txt} 不破则趋势未坏"),
+                       "direction": "bear", "star": bool(r1 >= 95),
+                       "detail": (f"RSI6={r1:.0f} 上穿 90 进入超买区，短线过热、追高需谨慎；"
+                                  f"RSI 跌回 90 下方为衰竭确认，回踩 MA20{m_txt} 不破则趋势未坏"),
                        "_score": 58, "_grp": "rsi_ob_in"})
-        elif ob_peak is not None and r1 >= 80:           # 波段延续
+        elif ob_peak is not None and r1 >= 90:           # 波段延续
             ob_peak, ob_hi = max(ob_peak, r1), max(ob_hi, float(high[i]))
-        elif ob_peak is not None and r1 < 78:            # 衰竭确认（跌出超买区）
-            if ob_peak >= 85:
+        elif ob_peak is not None and r1 < 88:            # 衰竭确认（跌出超买区）
+            if ob_peak >= 93:
                 ev.append({"bar_idx": i, "time": _date_str(d, i), "price": float(high[i]),
                            "kind": "indicator", "label": "RSI6超买衰竭",
-                           "direction": "bear", "star": bool(ob_peak >= 90),
-                           "detail": (f"超买衰竭确认：RSI6 自峰值 {ob_peak:.0f} 跌回 80 下方，短线防回调；"
+                           "direction": "bear", "star": bool(ob_peak >= 96),
+                           "detail": (f"超买衰竭确认：RSI6 自峰值 {ob_peak:.0f} 跌回 90 下方，短线防回调；"
                                       f"区间高点 {ob_hi:.2f} 不能放量收复则回调延续"),
                            "_score": 62, "_grp": "rsi_ob_out"})
             ob_peak = ob_hi = None
-        elif ob_peak is not None:                        # 78~80 徘徊，波段未结束
+        elif ob_peak is not None:                        # 88~90 徘徊，波段未结束
             ob_hi = max(ob_hi, float(high[i]))
         # ---- 超卖波段 ----
-        if os_trough is None and r0 > 20 >= r1:          # 新进超卖区
+        if os_trough is None and r0 > 10 >= r1:          # 新进超卖区
             os_trough, os_lo = r1, float(low[i])
             ev.append({"bar_idx": i, "time": _date_str(d, i), "price": float(low[i]),
                        "kind": "indicator", "label": "RSI6超卖",
-                       "direction": "bull", "star": bool(r1 <= 12),
-                       "detail": (f"RSI6={r1:.0f} 下穿 20 进入超卖区，杀跌过度；"
-                                  f"RSI 升回 20 上方为修复确认，反抽 MA20{m_txt} 不过则弱势未改"),
+                       "direction": "bull", "star": bool(r1 <= 5),
+                       "detail": (f"RSI6={r1:.0f} 下穿 10 进入超卖区，杀跌过度；"
+                                  f"RSI 升回 10 上方为修复确认，反抽 MA20{m_txt} 不过则弱势未改"),
                        "_score": 58, "_grp": "rsi_os_in"})
-        elif os_trough is not None and r1 <= 20:         # 波段延续
+        elif os_trough is not None and r1 <= 10:         # 波段延续
             os_trough, os_lo = min(os_trough, r1), min(os_lo, float(low[i]))
-        elif os_trough is not None and r1 > 22:          # 修复确认（升出超卖区）
-            if os_trough <= 15:
+        elif os_trough is not None and r1 > 12:          # 修复确认（升出超卖区）
+            if os_trough <= 7:
                 ev.append({"bar_idx": i, "time": _date_str(d, i), "price": float(low[i]),
                            "kind": "indicator", "label": "RSI6超卖修复",
-                           "direction": "bull", "star": bool(os_trough <= 10),
-                           "detail": (f"超卖修复确认：RSI6 自谷值 {os_trough:.0f} 升回 20 上方，短线有修复反弹；"
+                           "direction": "bull", "star": bool(os_trough <= 4),
+                           "detail": (f"超卖修复确认：RSI6 自谷值 {os_trough:.0f} 升回 10 上方，短线有修复反弹；"
                                       f"区间低点 {os_lo:.2f} 失守则修复失败"),
                            "_score": 62, "_grp": "rsi_os_out"})
             os_trough = os_lo = None
-        elif os_trough is not None:                      # 20~22 徘徊，波段未结束
+        elif os_trough is not None:                      # 10~12 徘徊，波段未结束
             os_lo = min(os_lo, float(low[i]))
     return ev
 
@@ -838,9 +838,9 @@ def analyze(df: pd.DataFrame, timeframe: str = "1d") -> dict:
     hist = float(d["MACD_HIST"].iloc[-1])
     hist_prev = float(d["MACD_HIST"].iloc[-4]) if n >= 4 else hist
     rsi6 = float(d["RSI6"].iloc[-1])
-    if rsi6 > 80:
+    if rsi6 > 90:
         rsi_state = "超买区，短线追高风险大"
-    elif rsi6 < 20:
+    elif rsi6 < 10:
         rsi_state = "超卖区，存在技术性修复需求"
     else:
         rsi_state = "中性区"

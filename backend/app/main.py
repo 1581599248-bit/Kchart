@@ -371,7 +371,7 @@ def _baked_analysis_usable(ts_code: str, entry: dict, start_d) -> bool:
     bars = entry.get("bars") or []
     if not baked or not bars:
         return False
-    first_d = dt.datetime.utcfromtimestamp(bars[0]["time"]).date()  # 烘焙分析窗口起点
+    first_d = dt.datetime.fromtimestamp(bars[0]["time"], dt.timezone.utc).date()  # 烘焙分析窗口起点（time 口径=naive 当 UTC）
     if start_d > first_d:
         return False  # 请求窗口未覆盖烘焙窗口（比烘焙更短的窗口不走烘焙，保持与实时计算口径一致）
     p = _kline_cache_file(ts_code)
