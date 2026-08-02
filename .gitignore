@@ -8,6 +8,7 @@ venv/
 data/*.duckdb
 data/*.duckdb.wal
 data/cache/
+data/api_cache/
 
 # 日志
 logs/

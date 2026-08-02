@@ -362,25 +362,23 @@ def score_asof(panel: pd.DataFrame, asof_date) -> pd.DataFrame:
     return scores.merge(day_fac, on="ts_code", how="left")
 
 
+# ======================= TOP20 榜单文案 =======================
+
+def make_analysis_brief(group_scores: dict) -> str:
+    """TOP20 榜单一句话解读（与现网文案一致）："XX面最强、XX面最弱"。
+
+    group_scores：{G1..G5: 组标准化分}，None 组跳过；无有效组返回空串。
+    """
+    g_sorted = sorted(((k, v) for k, v in group_scores.items() if v is not None),
+                      key=lambda kv: kv[1])
+    if not g_sorted:
+        return ""
+    weak = GROUP_NAMES.get(g_sorted[0][0], "")
+    strong = GROUP_NAMES.get(g_sorted[-1][0], "")
+    return f"{strong}面最强、{weak}面最弱" if strong else ""
+
+
 # ======================= 冒烟自检 =======================
 
 if __name__ == "__main__":
-    # 质量红线 §5：用 600519.SH 单日打分冒烟（全池当日横截面，含 000300.SH 指数仅作日历参照）
-    from . import db
-
-    end = db.latest_trade_date()
-    days = db.trade_calendar("2020-01-01", end)
-    start = days[max(0, len(days) - 400)]   # 约400个交易日历史保证 250 窗口就绪
-    print(f"面板区间 {start} ~ {end}")
-    panel = db.load_daily_qfq_universe(start, end)
-    # 冒烟阶段无全市场 turnover 列时以 NaN 处理（生产路径由 backtest/precompute 提供）
-    if "turnover_rate" not in panel.columns:
-        panel["turnover_rate"] = np.nan
-    print("panel rows:", len(panel), "codes:", panel["ts_code"].nunique())
-    res = score_asof(panel, end)
-    print(f"{end} 得分股票数: {len(res)}")
-    cols = ["ts_code", "score", "rank", "G1", "G2", "G3", "G4", "G5"]
-    print(res.sort_values("rank")[cols].head(20).to_string(index=False))
-    m = res["ts_code"] == "600519.SH"
-    if m.any():
-        print("600519.SH:", res.loc[m, cols].to_string(index=False))
+    print(make_analysis_brief({"G1": 0.5, "G2": -1.2, "G3": 2.0, "G4": None, "G5": 0.1}))

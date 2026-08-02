@@ -4,14 +4,15 @@ A股技术面多因子打分与K线结构分析系统。
 
 ## 一键启动
 
-双击 **`启动看板.bat`**，浏览器自动打开 `http://127.0.0.1:8600`。
+1. 设置数据 API token（只需一次）：`setx TS_TOKEN <你的token>`（重开终端生效），或当前窗口临时 `set TS_TOKEN=<你的token>`
+2. 双击 **`启动看板.bat`**，浏览器自动打开 `http://127.0.0.1:8600`
 
 ## 功能
 
-- **指数看板**：上证/深成/创业板/科创50/沪深300/中证500/中证1000/中证2000 的 K线 + 推背图标注 + 文字分析
-- **TOP20 瀑布流**：技术面五因子组打分排名，每标的含迷你K线、推背图、因子组得分、目标位/止损
-- **搜索**：全市场指数与个股检索，完整K线看板（60m/日/周/月，MACD/KDJ/RSI/WR/BOLL/MA/EMA，画线工具）
-- **手机端**：响应式布局（≤640px 断点），iPhone 与电脑同一 Wi-Fi 时用 `http://<电脑局域网IP>:8600` 打开
+- **指数看板**：上证/深成/创业板/科创50/沪深300/中证500/中证1000/中证2000 的日线 K线 + 推背图标注 + 文字分析
+- **TOP20 瀑布流**：技术面五因子组打分排名，每标的含迷你K线、推背图、因子组得分条形图
+- **搜索**：全市场指数与个股检索，完整K线看板（日线，MACD/KDJ/RSI/WR/BOLL/MA/EMA）
+- **手机端**：响应式布局（≤640px 断点），iPhone 直接打开线上地址；局域网内也可用 `http://<电脑局域网IP>:8600`
 
 ## 打分模型
 
@@ -21,26 +22,28 @@ A股技术面多因子打分与K线结构分析系统。
 
 ## 数据
 
-- 权威库（只读外接，**不在本仓库内**）：默认路径 `C:/Users/Administrator/Desktop/完整A股量化模型 数据库/RYAN重要全市场K线数据库.duckdb`，用环境变量 `RYAN_AUTH_DB` 指向实际位置
-- 系统记忆（打分缓存/回测结果）：`data/results.duckdb`，git 忽略，首次运行自动重建
-- API token 只从环境变量 `TS_TOKEN` 读取
+- 全部行情数据来自 **tushare 兼容 HTTP API**：token 从环境变量 `TS_TOKEN` 读取（**不要写进任何会提交的文件**），接口地址默认 `https://ts.gyzcloud.top/api`，可用 `TS_URL` 覆盖
+- 运行时磁盘缓存：`data/api_cache/`（git 忽略，自动增量更新）
+- 推背图分析缓存：`data/results.duckdb`（git 忽略，自动重建）
+- **TOP20 榜单是离线烘焙的静态文件** `data/baked_top20.json`（随仓库提交）。更新榜单：设好 `TS_TOKEN` 后运行 `.venv/Scripts/python.exe scripts/bake_top20.py`（全市场 420 天窗口，约 10-15 分钟），然后提交推送该文件，Render 重新部署即可
+- 未设置 `TS_TOKEN` 时：TOP20 榜单（烘焙文件）仍可看，行情类接口返回 503 提示
 
 ## 新机器部署
 
 1. 运行 `scripts/setup_env.bat` 创建 `.venv` 并安装依赖
-2. 把权威库 duckdb 拷到本机，设 `set RYAN_AUTH_DB=<权威库duckdb路径>`（或放到默认路径）
+2. `setx TS_TOKEN <你的token>`
 3. 双击 `启动看板.bat`
 
 ## Render 部署（线上版）
 
-线上版使用**快照库**（约 870MB，含全市场日线/复权因子/指数/名单/日历，不含 60m 分时），与本地功能一致，仅个股 60 分钟线不可用。
+线上版与本地完全一致：日线数据运行时从 API 实时拉取，TOP20 用仓库里的烘焙榜单。
 
-1. **发布快照库资产**：本仓库 Releases 必须有 tag 为 `data-v1` 的 Release，资产名 `kline_snapshot.duckdb`。重新生成：`.venv/Scripts/python.exe scripts/export_snapshot.py`，然后替换该 Release 里的同名资产即可更新线上数据。
-2. **部署**：Render Dashboard → New → Blueprint → 选本仓库。`render.yaml` 自动识别：构建时从 `data-v1` Release 下载快照库，免费档，`/api/meta` 健康检查。
-3. 快照模式由环境变量 `RYAN_SNAPSHOT=1` 开启；DuckDB 内存上限 `RYAN_DUCK_MEM`（Render 免费档 512MB 内存，yaml 里已设 400MB）。
+1. Render Dashboard → New → Blueprint → 选本仓库，`render.yaml` 自动识别（免费档，`/api/meta` 健康检查）
+2. 部署时 Render 会提示填写 **`TS_TOKEN`**（render.yaml 里 `sync:false`，密钥不进仓库），粘贴你的 token
+3. 等构建完成（约 2-3 分钟），访问 `https://<服务名>.onrender.com`
 
-注意：免费档 15 分钟无访问会休眠，冷启动约 30 秒；数据是快照日期的静态数据。
+注意：免费档 15 分钟无访问会休眠，冷启动约 30 秒；token 到期后换新值（Render 服务 Settings → Environment 改 `TS_TOKEN` 即可，无需改代码）。
 
 ## 架构
 
-见 `docs/ARCHITECTURE.md`（唯一开发依据）。后端 FastAPI + DuckDB，前端原生 SPA + Lightweight Charts（已本地化）。
+见 `docs/ARCHITECTURE.md`（唯一开发依据）。后端 FastAPI + DuckDB（分析缓存），前端原生 SPA + Lightweight Charts（已本地化）。

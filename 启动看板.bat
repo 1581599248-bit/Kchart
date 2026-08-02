@@ -9,10 +9,16 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
+if "%TS_TOKEN%"=="" (
+    echo [警告] 未设置环境变量 TS_TOKEN：行情数据将无法加载（TOP20 榜单仍可查看）
+    echo         设置方法：setx TS_TOKEN 你的token  ，然后重开本窗口
+    echo.
+)
+
 echo ============================================
 echo   RYAN K线推背图 ^| 技术面多因子打分系统
 echo   正在启动后端服务（127.0.0.1:8600）...
-echo   首次启动需预计算打分缓存，请稍候
+echo   数据来自 API 实时拉取，首次打开某标的会稍慢
 echo ============================================
 
 start "" /min cmd /c "timeout /t 4 /nobreak >nul && start http://127.0.0.1:8600"

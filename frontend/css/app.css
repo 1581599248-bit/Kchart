@@ -75,15 +75,6 @@ main { padding: 12px 16px 60px; max-width: 1500px; margin: 0 auto; }
 .skeleton { animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
 
-/* 画线工具条 */
-.draw-bar { display: flex; gap: 4px; align-items: center; padding: 4px 12px;
-  border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; }
-.draw-btn { background: none; border: 1px solid var(--border); color: var(--dim);
-  padding: 3px 9px; border-radius: 3px; font-size: 12px; }
-.draw-btn:hover { color: var(--text); border-color: var(--dim); }
-.draw-btn.active { color: var(--gold); border-color: var(--gold); background: var(--panel2); }
-.draw-btn.danger:hover { color: var(--down); border-color: var(--down); }
-
 /* 分析卡 */
 .analysis-card { border-top: 1px solid var(--border); padding: 10px 14px; font-size: 13px; }
 .analysis-card .item { margin: 0 0 6px; line-height: 1.6; }
@@ -111,7 +102,7 @@ main { padding: 12px 16px 60px; max-width: 1500px; margin: 0 auto; }
 .g-row { display: flex; align-items: center; gap: 6px; }
 .g-row .g-name { width: 26px; color: var(--dim); }
 .g-row .g-track { flex: 1; height: 8px; background: var(--grid); border-radius: 2px; overflow: hidden; }
-.g-row .g-fill { height: 100%; background: var(--up); border-radius: 2px; }
+.g-row .g-fill { display: block; height: 100%; background: var(--up); border-radius: 2px; }
 .g-row .g-fill.neg { background: var(--down); }
 .g-row .g-val { width: 36px; text-align: right; color: var(--dim); }
 .brief { font-size: 12px; color: var(--dim); line-height: 1.6; padding: 6px 0; }
@@ -195,8 +186,6 @@ main { padding: 12px 16px 60px; max-width: 1500px; margin: 0 auto; }
   .kl-main { height: 300px; }
   .kl-pane { height: 60px; }
   .kl-legend { font-size: 10px; top: 2px; left: 4px; }
-  .draw-bar { padding: 4px 8px; gap: 3px; }
-  .draw-btn { padding: 3px 7px; font-size: 11px; }
   .analysis-card { font-size: 12px; padding: 8px 10px; }
   .anno-tip { max-width: 240px; font-size: 11px; }
 

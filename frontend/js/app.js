@@ -31,23 +31,13 @@
   function destroyBoard(board) { if (board) { try { board.destroy(); } catch (_) { /* 忽略 */ } } }
 
   function createFullBoard(container, tsCode) {
-    // 无60分数据的指数（如中证2000）隐藏60分按钮；
-    // 快照模式（Render 部署）数据不含个股小时线，所有个股同样隐藏60分按钮
-    const idxInfo = state.meta && Array.isArray(state.meta.index_list)
-      ? state.meta.index_list.find(x => x.ts_code === tsCode) : null;
-    const noStock60m = state.meta && state.meta.snapshot && !idxInfo;
-    const opts = (idxInfo && idxInfo.has_60m === false) || noStock60m ? { tfs: ['1d', '1w', '1M'] } : {};
-    const b = new window.KLineBoard(container, opts);
-    b.drawingManager = new window.DrawingManager(b);
+    const b = new window.KLineBoard(container, {});
     b.analysisView = new window.AnalysisView(b);
     b.load(tsCode);
     return b;
   }
   function createMiniBoard(container, tsCode) {
-    // TOP20 迷你图（个股）：快照模式无个股小时线，隐藏60分按钮
-    const opts = { mini: true };
-    if (state.meta && state.meta.snapshot) opts.tfs = ['1d', '1w', '1M'];
-    const b = new window.KLineBoard(container, opts);
+    const b = new window.KLineBoard(container, { mini: true });
     b.analysisView = new window.AnalysisView(b, { summary: false, quiet: true });
     b.load(tsCode);
     return b;

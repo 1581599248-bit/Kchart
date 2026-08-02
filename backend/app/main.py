@@ -1,37 +1,44 @@
 """FastAPI 入口（ARCHITECTURE.md 第3节 main.py 规范）。
 
 静态托管 frontend/ 于 /；API 前缀 /api。
-已实现：/api/meta /api/search /api/bars /api/indicators；
-其余（/api/analysis /api/top20 /api/backtest /api/precompute）501 占位，后续任务实现。
+已实现：/api/meta /api/search /api/bars /api/indicators /api/analysis /api/top20。
+
+数据源：backend/app/ts_api.py（tushare 兼容 HTTP API + 本地磁盘缓存），
+token 从环境变量 TS_TOKEN 读取。60m 周期 API 版暂不支持（一律 400）。
+
+TOP20：本地烘焙脚本 scripts/bake_top20.py 生成静态文件 data/baked_top20.json，
+/api/top20 只读该文件，不在服务端触发任何预计算。
 
 时间口径说明：
-- time 输出 UNIX 秒整数。日线取当日 00:00，60m 用真实 trade_time；
+- time 输出 UNIX 秒整数。日线取当日 00:00；
   均按 naive 时间戳直接转 epoch（即当作 UTC 处理，lightweight-charts 约定）。
-- db_sha256：权威库 17.9GiB，全量哈希成本高；启动时后台线程计算全量 SHA-256，
-  完成前 /api/meta 返回文件指纹（size+mtime 采样哈希），完成后缓存进 results_db
-  system_meta 供后续启动直接读取。
 """
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
+import json
 import logging
 import math
-import threading
-import time as _time
 
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, indicators, resample, results_db
+from . import config, indicators, resample, results_db, ts_api
+from .ts_api import TsApiError
 
 log = logging.getLogger("ryan.main")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 app = FastAPI(title="RYAN K线推背图", version=config.MODEL_VERSION)
+
+
+@app.exception_handler(TsApiError)
+async def _ts_api_error_handler(request, exc):
+    """API 数据源错误（token 缺失/限流/网络）→ 503 + 中文提示，而非裸 500。"""
+    from fastapi.responses import JSONResponse
+    return JSONResponse({"detail": str(exc)}, status_code=503)
 
 _TIMEFRAMES = {"60m", "1d", "1w", "1M"}
 _INDICATOR_COLS = [
@@ -47,98 +54,36 @@ _INDICATOR_COLS = [
     "ROC20", "ROC60",
 ]
 
-# 进程内状态
-_state = {"db_sha256": None, "search_df": None, "search_loaded_at": 0.0}
+# TOP20 烘焙产物（scripts/bake_top20.py 生成，提交进 git）
+_BAKED_TOP20 = config.DATA_DIR / "baked_top20.json"
 
 
-# ---------------- 启动校验与库指纹 ----------------
-
-def _fingerprint(path: str) -> str:
-    """快速文件指纹：size + 头/尾 4MB 采样哈希（全量 SHA-256 的廉价替代）。"""
-    import os
-    h = hashlib.sha256()
-    size = os.path.getsize(path)
-    h.update(str(size).encode())
-    with open(path, "rb") as f:
-        h.update(f.read(4 * 1024 * 1024))
-        if size > 4 * 1024 * 1024:
-            f.seek(-4 * 1024 * 1024, 2)
-            h.update(f.read(4 * 1024 * 1024))
-    return h.hexdigest()
-
-
-def _full_sha256_worker(path: str) -> None:
-    """后台线程：全量 SHA-256（17.9GiB，约需数十秒），完成后写入缓存。"""
-    try:
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(64 * 1024 * 1024), b""):
-                h.update(chunk)
-        digest = h.hexdigest()
-        _state["db_sha256"] = digest
-        results_db.set_meta("auth_db_sha256", digest)
-        log.info("权威库全量 SHA-256: %s", digest)
-    except Exception:
-        log.exception("全量 SHA-256 计算失败，沿用采样指纹")
-
-
-def _init_sha256() -> None:
-    cached = results_db.get_meta("auth_db_sha256")
-    fp = _fingerprint(config.AUTH_DB_PATH)
-    cached_fp = results_db.get_meta("auth_db_fingerprint")
-    if cached and cached_fp == fp:
-        # 指纹未变 → 直接沿用已缓存的全量哈希
-        _state["db_sha256"] = cached
-        log.info("权威库 SHA-256（缓存）: %s", cached)
-        return
-    _state["db_sha256"] = fp  # 先返回采样指纹
-    results_db.set_meta("auth_db_fingerprint", fp)
-    threading.Thread(target=_full_sha256_worker, args=(config.AUTH_DB_PATH,), daemon=True).start()
-    log.info("权威库采样指纹: %s（全量 SHA-256 后台计算中）", fp)
-
+# ---------------- 启动校验 ----------------
 
 def _startup_check() -> None:
-    import os
-    if not os.path.exists(config.AUTH_DB_PATH):
-        raise RuntimeError(f"权威库不可达: {config.AUTH_DB_PATH}")
-    required = [
-        "daily_bars_full", "adj_factors_full",
-        "research_daily_bars_strict",
-        "index_daily_bars", "index_master", "security_master_history", "trading_calendar",
-    ]
-    if not config.SNAPSHOT:
-        # 完整权威库才有 60 分钟线（快照库不含，见 scripts/export_snapshot.py）
-        required += ["hourly_bars_qfq", "research_hourly_bars_strict"]
-    with db.get_con() as con:
-        existing = {r[0] for r in con.execute(
-            "SELECT table_name FROM information_schema.tables").fetchall()}
-    missing = [t for t in required if t not in existing]
-    if missing:
-        raise RuntimeError(f"权威库缺少表/视图: {missing}")
-    results_db.get_con().close()  # 建 results 库
-    _init_sha256()
-    log.info("最新交易日: %s | model_version: %s | snapshot: %s",
-             db.latest_trade_date(), config.MODEL_VERSION, config.SNAPSHOT)
+    if not config.TS_TOKEN:
+        # 未设 token 时行情类接口不可用，但 /api/top20 的烘焙数据仍可读，照常启动
+        log.warning("=" * 60)
+        log.warning("未设置环境变量 TS_TOKEN：行情接口（bars/indicators/analysis/search）")
+        log.warning("将不可用；/api/top20 烘焙榜单不受影响。请设置 TS_TOKEN 后重启。")
+        log.warning("=" * 60)
+    else:
+        try:
+            log.info("最新交易日: %s", ts_api.latest_trade_date())
+        except Exception:
+            log.exception("启动时获取最新交易日失败（首次请求时会重试）")
+    results_db.get_con().close()  # 建 results 库（analysis 缓存）
+    log.info("model_version: %s | TS_URL: %s", config.MODEL_VERSION, config.TS_URL)
 
 
 # ---------------- 数据装载 ----------------
 
 def _load_bars_df(ts_code: str, timeframe: str, start, end) -> pd.DataFrame:
-    """按标的类型与时间粒度装载 bars DataFrame（含 trade_time/trade_date + OHLCV）。"""
-    is_idx = db.is_index(ts_code)
+    """按标的类型与时间粒度装载 bars DataFrame（含 trade_date + OHLCV，输出列名 ts）。"""
     if timeframe == "60m":
-        if is_idx:
-            # 权威库无指数小时线：走新浪公开接口在线源（sina_index.py，只读+本地缓存）
-            from . import sina_index
-            df = sina_index.fetch_index_60min(ts_code)
-            if df.empty:
-                raise HTTPException(400, "该指数暂无60分钟线数据")
-            return df.rename(columns={"trade_time": "ts"})
-        if config.SNAPSHOT:
-            raise HTTPException(400, "快照版暂无个股60分钟线（部署数据不含小时线）")
-        df = db.load_hourly(ts_code, start, end)
-        return df.rename(columns={"trade_time": "ts"})
-    df = db.load_index_daily(ts_code, start, end) if is_idx else db.load_daily_qfq(ts_code, start, end)
+        raise HTTPException(400, "API 版暂无 60 分钟线")
+    df = (ts_api.load_index_daily(ts_code, start, end) if ts_api.is_index(ts_code)
+          else ts_api.load_daily_qfq(ts_code, start, end))
     if timeframe in ("1w", "1M"):
         df = resample.resample_ohlcv(df, "W" if timeframe == "1w" else "M")
     df = df.rename(columns={"trade_date": "ts"})
@@ -165,38 +110,23 @@ def _json_safe(v):
 
 @app.get("/api/meta")
 def api_meta():
-    idx_rows = []
-    from . import sina_index
-    with db.get_con() as con:
-        for r in con.execute(
-            "SELECT ts_code, name FROM index_master WHERE ts_code = ANY(?)",
-            [config.BROAD_INDEX_CODES],
-        ).fetchall():
-            idx_rows.append({"ts_code": r[0], "name": r[1],
-                             "has_60m": r[0] in sina_index._SINA_SYMBOL
-                             and sina_index._SINA_SYMBOL[r[0]] is not None})
-    order = {c: i for i, c in enumerate(config.BROAD_INDEX_CODES)}
-    idx_rows.sort(key=lambda x: order.get(x["ts_code"], 99))
+    idx_rows = [{"ts_code": c, "name": config.BROAD_INDEX_NAMES.get(c, c),
+                 "has_60m": False} for c in config.BROAD_INDEX_CODES]
+    try:
+        latest = str(ts_api.latest_trade_date())
+    except Exception:
+        latest = None  # token 缺失或 API 不可达时降级，其余字段照常返回
     return {
-        "latest_trade_date": str(db.latest_trade_date()),
-        "db_sha256": _state["db_sha256"],
+        "latest_trade_date": latest,
         "model_version": config.MODEL_VERSION,
-        "snapshot": config.SNAPSHOT,
+        "snapshot": False,  # 保留字段兼容前端；API 版无快照概念
         "index_list": idx_rows,
     }
 
 
-def _search_df() -> pd.DataFrame:
-    """搜索清单进程内缓存（10分钟有效期，避免每次全表 UNION）。"""
-    if _state["search_df"] is None or _time.time() - _state["search_loaded_at"] > 600:
-        _state["search_df"] = db.list_securities()
-        _state["search_loaded_at"] = _time.time()
-    return _state["search_df"]
-
-
 @app.get("/api/search")
 def api_search(q: str = Query(..., min_length=1), limit: int = Query(20, ge=1, le=100)):
-    df = _search_df()
+    df = ts_api.list_securities()
     ql = q.strip().lower()
     code = df["ts_code"].str.lower()
     name = df["name"].str.lower()
@@ -236,8 +166,8 @@ def api_bars(
     ]
     return {
         "bars": bars,
-        "name": db.get_security_name(ts_code),
-        "currency_note": "个股OHLC为前复权价(元); 指数无复权; vol单位: 日线=手/小时线=股; amount单位: 日线=千元/小时线=元",
+        "name": ts_api.get_security_name(ts_code),
+        "currency_note": "个股OHLC为前复权价(元); 指数无复权; vol单位: 日线=手; amount单位: 日线=千元",
     }
 
 
@@ -316,7 +246,7 @@ def api_analysis(
         raise HTTPException(400, f"timeframe 须为 {sorted(_TIMEFRAMES)} 之一")
     if start is None:
         lookback = _ANALYSIS_LOOKBACK[timeframe]
-        start_d = db.latest_trade_date() - dt.timedelta(days=lookback)
+        start_d = ts_api.latest_trade_date() - dt.timedelta(days=lookback)
     else:
         start_d = dt.datetime.strptime(start[:10], "%Y-%m-%d").date()
 
@@ -339,7 +269,7 @@ def api_analysis(
     result["ts_code"] = ts_code
     result["timeframe"] = timeframe
     result["asof_date"] = asof_date
-    result["name"] = db.get_security_name(ts_code)
+    result["name"] = ts_api.get_security_name(ts_code)
     try:
         results_db.save_analysis(ts_code, cache_tf, asof_date, result)
     except Exception:
@@ -347,119 +277,25 @@ def api_analysis(
     return result
 
 
-# ---------------- 501 占位（后续任务实现） ----------------
-
-
-# ---------------- TOP20 打分 ----------------
-
-_GROUP_CN = {"G1": "短期反转", "G2": "换手量能", "G3": "趋势质量", "G4": "波动彩票", "G5": "结构形态"}
-_state["precompute_running"] = False
-_state["backtest_jobs"] = {}  # run_id -> 'running' | 'done' | 'error:...'
-
-
-def _latest_scored_date() -> str | None:
-    with results_db.get_con() as con:
-        row = con.execute("SELECT max(trade_date) FROM scores_daily").fetchone()
-    return str(row[0]) if row and row[0] else None
-
-
-def _precompute_worker() -> None:
-    import subprocess, sys
-    try:
-        subprocess.run([sys.executable, "scripts/precompute_scores.py"],
-                       cwd=str(config.BASE_DIR), timeout=3600, check=False)
-    except Exception:
-        log.exception("预计算打分失败")
-    finally:
-        _state["precompute_running"] = False
-
+# ---------------- TOP20 榜单（本地烘焙静态文件） ----------------
 
 @app.get("/api/top20")
 def api_top20(date: str | None = None, refresh: int = 0):
-    import json as _json
-    scored_date = date or _latest_scored_date()
-    if scored_date is None or refresh:
-        if not _state["precompute_running"]:
-            _state["precompute_running"] = True
-            threading.Thread(target=_precompute_worker, daemon=True).start()
+    """读 scripts/bake_top20.py 烘焙的 data/baked_top20.json；refresh 参数忽略。
+
+    文件不存在（或请求日期与榜单日期不符）时返回 computing，前端沿用现有轮询提示，
+    服务端不再触发任何预计算——榜单更新靠本地跑烘焙脚本并提交 JSON。
+    """
+    payload = None
+    if _BAKED_TOP20.exists():
+        try:
+            payload = json.loads(_BAKED_TOP20.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            log.exception("baked_top20.json 读取失败")
+    if payload is None or (date and date != payload.get("date")):
         return {"status": "computing", "items": []}
-    df = results_db.get_scores(scored_date)
-    if df.empty:
-        return {"status": "computing", "items": []}
-    top = df.head(20)
-    codes = top["ts_code"].tolist()
-    # 最新涨跌幅（原始价口径 pct_chg，仅展示用）
-    pct = {}
-    with db.get_con() as con:
-        for r in con.execute(
-            "SELECT ts_code, pct_chg FROM daily_bars_full "
-            "WHERE trade_date = ? AND ts_code = ANY(?)", [scored_date, codes],
-        ).fetchall():
-            pct[r[0]] = r[1]
-    items = []
-    for r in top.itertuples():
-        groups = _json.loads(r.group_json)
-        g_sorted = sorted(((k, v) for k, v in groups.items() if v is not None),
-                          key=lambda kv: kv[1])
-        weak = _GROUP_CN.get(g_sorted[0][0], "") if g_sorted else ""
-        strong = _GROUP_CN.get(g_sorted[-1][0], "") if g_sorted else ""
-        items.append({
-            "rank": int(r.rank), "ts_code": r.ts_code,
-            "name": db.get_security_name(r.ts_code),
-            "score": round(float(r.score), 1),
-            "group_scores": groups,
-            "change_pct": _json_safe(pct.get(r.ts_code)),
-            "analysis_brief": f"{strong}面最强、{weak}面最弱" if strong else "",
-        })
-    return {"status": "ok", "date": scored_date, "items": items}
-
-
-# ---------------- 回测 ----------------
-
-def _backtest_worker(run_id: str, start: str, end: str | None, top_n: int) -> None:
-    try:
-        from . import backtest as bt_mod
-        bt_mod.run_backtest(start=start, end=end, top_n=top_n,
-                            save=True, run_id=run_id, verbose=False)
-        _state["backtest_jobs"][run_id] = "done"
-    except Exception as e:
-        log.exception("回测失败 %s", run_id)
-        _state["backtest_jobs"][run_id] = f"error:{e}"
-
-
-@app.get("/api/backtest")
-def api_backtest(start: str = "2016-01-01", end: str | None = None, top_n: int = 10):
-    end_s = end or str(db.latest_trade_date())
-    run_id = f"bt_{start.replace('-', '')}_{end_s.replace('-', '')}_top{top_n}"
-
-    cached = results_db.get_backtest(run_id)
-    if cached is not None:
-        nav = [
-            {"trade_date": str(r.trade_date)[:10], "nav": r.nav,
-             "bench_nav": r.bench_nav, "pool_nav": r.pool_nav}
-            for r in cached["nav"].itertuples()
-        ]
-        return {"status": "done", "run_id": run_id, "params": cached["params"],
-                "metrics": cached["metrics"], "nav": nav}
-
-    job = _state["backtest_jobs"].get(run_id)
-    if job and job.startswith("error:"):
-        raise HTTPException(500, f"回测失败: {job[6:]}")
-    if job != "running":
-        _state["backtest_jobs"][run_id] = "running"
-        threading.Thread(target=_backtest_worker,
-                         args=(run_id, start, end_s, top_n), daemon=True).start()
-    return {"status": "running", "run_id": run_id,
-            "eta_hint": "全量10年回测约4分钟，小样本约1分钟，请轮询"}
-
-
-@app.post("/api/precompute")
-def api_precompute():
-    if _state["precompute_running"]:
-        return {"status": "running"}
-    _state["precompute_running"] = True
-    threading.Thread(target=_precompute_worker, daemon=True).start()
-    return {"status": "started"}
+    return {"status": "ok", "date": payload.get("date"),
+            "items": payload.get("items", [])}
 
 
 # 静态托管 frontend/ 于 /（挂载在 API 路由之后）

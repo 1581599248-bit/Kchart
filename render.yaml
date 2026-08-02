@@ -1,22 +1,19 @@
-# Render 蓝图：RYAN K线推背图（快照模式部署）
-# 数据：构建时从 GitHub Release 下载精简快照库（scripts/export_snapshot.py 导出，871MB）。
-# 若重新导出快照，请在 GitHub Release（tag: data-v1）替换同名资产，URL 不变。
+# Render 蓝图：RYAN K线推背图（API 数据模式）
+# 数据：运行时从 tushare 兼容 API（TS_URL）实时拉取并磁盘缓存；
+#       TOP20 榜单为离线烘焙静态文件 data/baked_top20.json（scripts/bake_top20.py 生成，随仓库提交）。
+# 部署时 Render 会提示填写 TS_TOKEN（sync:false，密钥不进仓库）。
 services:
   - type: web
     name: kchart
     runtime: python
     plan: free
-    buildCommand: pip install -r backend/requirements.txt && mkdir -p data && curl -L --fail --retry 3 -o data/kline_snapshot.duckdb "$SNAPSHOT_URL"
+    buildCommand: pip install -r backend/requirements.txt
     startCommand: python -m backend.app.main
     healthCheckPath: /api/meta
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.13
-      - key: RYAN_AUTH_DB
-        value: ./data/kline_snapshot.duckdb
-      - key: RYAN_SNAPSHOT
-        value: "1"
-      - key: RYAN_DUCK_MEM
-        value: 400MB
-      - key: SNAPSHOT_URL
-        value: https://github.com/1581599248-bit/Kchart/releases/download/data-v1/kline_snapshot.duckdb
+      - key: TS_TOKEN
+        sync: false
+      - key: TS_URL
+        value: https://ts.gyzcloud.top/api

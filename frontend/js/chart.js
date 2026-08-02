@@ -12,8 +12,7 @@
     boll: '#8896b3', gold: '#f0b90b',
   };
   const TF_LIST = [
-    { key: '60m', label: '60分' }, { key: '1d', label: '日线' },
-    { key: '1w', label: '周线' }, { key: '1M', label: '月线' },
+    { key: '1d', label: '日线' },
   ];
   const PANE_DEFS = {
     VOL:  { label: 'VOL' },
@@ -67,15 +66,14 @@
   class KLineBoard {
     /**
      * @param container DOM 容器
-     * @param opts { mini?:bool, drawing?:bool, analysis?:bool, defaultTf?:string, mainHeight?:number }
+     * @param opts { mini?:bool, analysis?:bool, defaultTf?:string, mainHeight?:number }
      */
     constructor(container, opts) {
       opts = opts || {};
       this.opts = opts;
       this.mini = !!opts.mini;
       this.container = container;
-      // opts.tfs：限定可用周期（如无60分数据的指数传 ['1d','1w','1M']）
-      this.tfKeys = Array.isArray(opts.tfs) && opts.tfs.length ? opts.tfs : TF_LIST.map(t => t.key);
+      this.tfKeys = TF_LIST.map(t => t.key);
       this.timeframe = opts.defaultTf && this.tfKeys.includes(opts.defaultTf)
         ? opts.defaultTf : (this.tfKeys.includes('1d') ? '1d' : this.tfKeys[0]);
       this.tsCode = null;
@@ -99,13 +97,12 @@
       root.innerHTML = `
         <div class="kl-head">
           <span class="kl-title"><span class="nm">—</span><span class="code"></span></span>
-          <div class="tf-group">${TF_LIST.filter(t => this.tfKeys.includes(t.key)).map(t => `<button class="tf-btn${t.key === this.timeframe ? ' active' : ''}" data-tf="${t.key}">${t.label}</button>`).join('')}</div>
+          ${this.tfKeys.length > 1 ? `<div class="tf-group">${TF_LIST.filter(t => this.tfKeys.includes(t.key)).map(t => `<button class="tf-btn${t.key === this.timeframe ? ' active' : ''}" data-tf="${t.key}">${t.label}</button>`).join('')}</div>` : ''}
           ${this.mini ? '' : `<div class="ind-group">
             <label><input type="checkbox" data-boll> BOLL</label>
             ${Object.keys(PANE_DEFS).map(k => `<label><input type="checkbox" data-pane="${k}"${k === 'VOL' ? ' checked' : ''}> ${PANE_DEFS[k].label}</label>`).join('')}
           </div>`}
         </div>
-        <div class="draw-slot"></div>
         <div class="kl-body">
           <div class="kl-legend"></div>
           <div class="kl-main"></div>
@@ -313,8 +310,7 @@
     }
 
     _afterData() {
-      // 画线工具与推背图挂载点（由 app.js 按需装配）
-      if (this.drawingManager) this.drawingManager.onDataLoaded();
+      // 推背图挂载点（由 app.js 按需装配）
       if (this.analysisView) this.analysisView.load();
     }
 
@@ -359,7 +355,6 @@
 
     destroy() {
       if (this._ro) this._ro.disconnect();
-      if (this.drawingManager) this.drawingManager.destroy();
       this.charts.forEach(c => c.remove());
       this.el.remove();
     }
