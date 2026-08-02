@@ -102,10 +102,13 @@ def _startup_check() -> None:
     if not os.path.exists(config.AUTH_DB_PATH):
         raise RuntimeError(f"权威库不可达: {config.AUTH_DB_PATH}")
     required = [
-        "daily_bars_full", "adj_factors_full", "hourly_bars_qfq",
-        "research_daily_bars_strict", "research_hourly_bars_strict",
+        "daily_bars_full", "adj_factors_full",
+        "research_daily_bars_strict",
         "index_daily_bars", "index_master", "security_master_history", "trading_calendar",
     ]
+    if not config.SNAPSHOT:
+        # 完整权威库才有 60 分钟线（快照库不含，见 scripts/export_snapshot.py）
+        required += ["hourly_bars_qfq", "research_hourly_bars_strict"]
     with db.get_con() as con:
         existing = {r[0] for r in con.execute(
             "SELECT table_name FROM information_schema.tables").fetchall()}
@@ -114,7 +117,8 @@ def _startup_check() -> None:
         raise RuntimeError(f"权威库缺少表/视图: {missing}")
     results_db.get_con().close()  # 建 results 库
     _init_sha256()
-    log.info("最新交易日: %s | model_version: %s", db.latest_trade_date(), config.MODEL_VERSION)
+    log.info("最新交易日: %s | model_version: %s | snapshot: %s",
+             db.latest_trade_date(), config.MODEL_VERSION, config.SNAPSHOT)
 
 
 # ---------------- 数据装载 ----------------
@@ -130,6 +134,8 @@ def _load_bars_df(ts_code: str, timeframe: str, start, end) -> pd.DataFrame:
             if df.empty:
                 raise HTTPException(400, "该指数暂无60分钟线数据")
             return df.rename(columns={"trade_time": "ts"})
+        if config.SNAPSHOT:
+            raise HTTPException(400, "快照版暂无个股60分钟线（部署数据不含小时线）")
         df = db.load_hourly(ts_code, start, end)
         return df.rename(columns={"trade_time": "ts"})
     df = db.load_index_daily(ts_code, start, end) if is_idx else db.load_daily_qfq(ts_code, start, end)
@@ -175,6 +181,7 @@ def api_meta():
         "latest_trade_date": str(db.latest_trade_date()),
         "db_sha256": _state["db_sha256"],
         "model_version": config.MODEL_VERSION,
+        "snapshot": config.SNAPSHOT,
         "index_list": idx_rows,
     }
 

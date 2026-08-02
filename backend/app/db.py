@@ -30,13 +30,15 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 
 import duckdb
 import pandas as pd
 
 from . import config
 
-_MEMORY_LIMIT = "2GB"
+# DuckDB 单连接内存上限：Render 免费层 512MB 容器需调小（环境变量 RYAN_DUCK_MEM，如 400MB）
+_MEMORY_LIMIT = os.environ.get("RYAN_DUCK_MEM", "2GB")
 _THREADS = "4"
 
 # 个股前复权日线 SQL：原始价 × 当日因子 / 该股最新因子（锚定最新，与 daily_bars_qfq 视图口径一致）

@@ -1,0 +1,22 @@
+# Render 蓝图：RYAN K线推背图（快照模式部署）
+# 数据：构建时从 GitHub Release 下载精简快照库（scripts/export_snapshot.py 导出，871MB）。
+# 若重新导出快照，请在 GitHub Release（tag: data-v1）替换同名资产，URL 不变。
+services:
+  - type: web
+    name: kchart
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt && mkdir -p data && curl -L --fail --retry 3 -o data/kline_snapshot.duckdb "$SNAPSHOT_URL"
+    startCommand: python -m backend.app.main
+    healthCheckPath: /api/meta
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.13
+      - key: RYAN_AUTH_DB
+        value: ./data/kline_snapshot.duckdb
+      - key: RYAN_SNAPSHOT
+        value: "1"
+      - key: RYAN_DUCK_MEM
+        value: 400MB
+      - key: SNAPSHOT_URL
+        value: https://github.com/1581599248-bit/Kchart/releases/download/data-v1/kline_snapshot.duckdb

@@ -20,7 +20,11 @@ RESULTS_DB_PATH = DATA_DIR / "results.duckdb"
 FRONTEND_DIR = BASE_DIR / "frontend"
 
 HOST = "0.0.0.0"   # 监听所有网卡：手机(iPhone)与电脑同一 Wi-Fi 时可用 电脑局域网IP:8600 打开
-PORT = 8600
+PORT = int(os.environ.get("PORT", 8600))   # Render 等平台通过 PORT 环境变量分配端口
+
+# 快照模式（Render 部署）：权威库为精简快照（scripts/export_snapshot.py 导出），
+# 不含个股 60 分钟线——启动检查放宽、个股 60m 接口明确报错、前端隐藏个股 60m 按钮
+SNAPSHOT = os.environ.get("RYAN_SNAPSHOT") == "1"
 
 MODEL_VERSION = "v1.0"
 

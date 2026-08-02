@@ -31,6 +31,16 @@ A股技术面多因子打分与K线结构分析系统。
 2. 把权威库 duckdb 拷到本机，设 `set RYAN_AUTH_DB=<权威库duckdb路径>`（或放到默认路径）
 3. 双击 `启动看板.bat`
 
+## Render 部署（线上版）
+
+线上版使用**快照库**（约 870MB，含全市场日线/复权因子/指数/名单/日历，不含 60m 分时），与本地功能一致，仅个股 60 分钟线不可用。
+
+1. **发布快照库资产**：本仓库 Releases 必须有 tag 为 `data-v1` 的 Release，资产名 `kline_snapshot.duckdb`。重新生成：`.venv/Scripts/python.exe scripts/export_snapshot.py`，然后替换该 Release 里的同名资产即可更新线上数据。
+2. **部署**：Render Dashboard → New → Blueprint → 选本仓库。`render.yaml` 自动识别：构建时从 `data-v1` Release 下载快照库，免费档，`/api/meta` 健康检查。
+3. 快照模式由环境变量 `RYAN_SNAPSHOT=1` 开启；DuckDB 内存上限 `RYAN_DUCK_MEM`（Render 免费档 512MB 内存，yaml 里已设 400MB）。
+
+注意：免费档 15 分钟无访问会休眠，冷启动约 30 秒；数据是快照日期的静态数据。
+
 ## 架构
 
 见 `docs/ARCHITECTURE.md`（唯一开发依据）。后端 FastAPI + DuckDB，前端原生 SPA + Lightweight Charts（已本地化）。
