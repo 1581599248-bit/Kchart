@@ -23,6 +23,7 @@ TS_TOKEN = os.environ.get("TS_TOKEN", "")                    # 禁止写进代�
 TS_URL = os.environ.get("TS_URL", "https://ts.gyzcloud.top/api")
 TS_MIN_INTERVAL = float(os.environ.get("TS_MIN_INTERVAL", 0.45))  # 最小调用间隔秒（≈133次/分）
 TS_MAX_INFLIGHT = int(os.environ.get("TS_MAX_INFLIGHT", 2))      # 同时在飞请求数上限（上游有并发限制）
+KLINE_EARLIEST = os.environ.get("KLINE_EARLIEST", "20050101")    # K线最早日期：全量拉取从该日起（线上加载更快）
 
 # 分页1顶部 8 个宽基指数
 BROAD_INDEX_CODES = [

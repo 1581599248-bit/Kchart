@@ -10,6 +10,7 @@
 - 磁盘缓存 data/api_cache/（JSON）：
   * stock_basic / trade_cal：12 小时有效期整包重拉；
   * K 线类（daily / adj_factor / index_daily）：按 ts_code 单文件缓存原始数据，
+    空缓存全量拉取自 KLINE_EARLIEST 起（默认 2005-01-01），
     缓存内最大日期 < 最新交易日时增量拉取（start_date=最大日+1）合并去重写回；
     前复权在 load_daily_qfq 读取时计算（OHLC × adj_factor / max(adj_factor)，
     max 取该股缓存全历史最新因子，与原 db.py 口径一致）。
@@ -168,10 +169,12 @@ def _cached_kline(name: str, api_name: str, key: str, fields: str) -> pd.DataFra
             df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d")
             max_d = df["trade_date"].max().date()
         if max_d is None or max_d < latest:
-            # 增量：从缓存最大日+1 拉起；空缓存则全历史一次拉取
+            # 增量：从缓存最大日+1 拉起；空缓存则全历史一次拉取（自 KLINE_EARLIEST 起，默认 2005）
             params = dict(key)
             if max_d is not None:
                 params["start_date"] = (max_d + dt.timedelta(days=1)).strftime("%Y%m%d")
+            else:
+                params["start_date"] = config.KLINE_EARLIEST
             new = call_api(api_name, params=params, fields=fields)
             if not new.empty:
                 new["trade_date"] = pd.to_datetime(new["trade_date"], format="%Y%m%d")
