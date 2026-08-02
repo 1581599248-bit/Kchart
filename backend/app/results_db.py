@@ -1,10 +1,9 @@
 """研究结果库（ARCHITECTURE.md 第3节 results_db.py 规范，系统记忆）。
 
 独立库 data/results.duckdb（可写）。API 数据源改造后仅保留：
-- analysis_cache：/api/analysis 结果缓存；
+- analysis_cache：/api/analysis 结果缓存（含启动后 8 指数预计算）；
 - system_meta：系统元信息键值。
-打分榜单改为本地烘焙静态 JSON（scripts/bake_top20.py → data/baked_top20.json），
-回测功能已下线，相关表不再维护。
+TOP20 榜单与回测功能已下线，相关表不再维护。
 """
 from __future__ import annotations
 

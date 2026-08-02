@@ -134,16 +134,6 @@
       await sleep(100);
       return genAnalysis(ts_code, genBars(ts_code, timeframe || '1d'));
     },
-    top20: async () => {
-      await sleep(150);
-      return STOCKS.map(([c, n], i) => ({
-        rank: i + 1, ts_code: c, name: n,
-        score: +(95 - i * 1.7).toFixed(1),
-        group_scores: { G1: +(Math.random() * 2 - 1).toFixed(2), G2: +(Math.random() * 2 - 1).toFixed(2), G3: +(Math.random() * 2 - 1).toFixed(2), G4: +(Math.random() * 2 - 1).toFixed(2), G5: +(Math.random() * 2 - 1).toFixed(2) },
-        change_pct: +(Math.random() * 6 - 3).toFixed(2),
-        analysis_brief: '结构偏多，回调至关键支撑位附近，关注量能配合。',
-      }));
-    },
   });
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

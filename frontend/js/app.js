@@ -1,4 +1,4 @@
-/* app.js — 两分页主控：指数看板 / TOP20 + 单标的全尺寸看板 */
+/* app.js — 单页主控：指数看板 + 全市场搜索/个股看板（TOP20 已下线） */
 (function () {
   'use strict';
   const $ = s => document.querySelector(s);
@@ -10,21 +10,17 @@
     { ts_code: '000300.SH', name: '沪深300' }, { ts_code: '000905.SH', name: '中证500' },
     { ts_code: '000852.SH', name: '中证1000' }, { ts_code: '932000.CSI', name: '中证2000' },
   ];
-  const G_LABELS = { G1: '短期反转', G2: '换手量能', G3: '趋势质量', G4: '波动彩票', G5: '结构形态' };
 
   const state = {
-    page: 'board', prevPage: 'board', meta: null,
-    indexBoard: null, stockBoard: null, detailBoard: null, currentIndex: null, currentBoardCode: null,
-    top20Loaded: false, observer: null,
+    page: 'board', meta: null,
+    indexBoard: null, stockBoard: null, currentIndex: null, currentBoardCode: null,
   };
 
   // ---------- 分页切换 ----------
   function showPage(name) {
-    if (name !== 'detail') state.prevPage = state.page === 'detail' ? state.prevPage : state.page;
     state.page = name;
     $$('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + name));
     $$('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === name));
-    if (name === 'search' && !state.top20Loaded) loadTop20(false);
   }
 
   // ---------- 看板装配 ----------
@@ -36,14 +32,8 @@
     b.load(tsCode);
     return b;
   }
-  function createMiniBoard(container, tsCode) {
-    const b = new window.KLineBoard(container, { mini: true });
-    b.analysisView = new window.AnalysisView(b, { summary: false, quiet: true });
-    b.load(tsCode);
-    return b;
-  }
 
-  // ---------- 分页1：指数看板 ----------
+  // ---------- 指数看板（上半，固定） ----------
   async function initMeta() {
     try { state.meta = await window.API.meta(); }
     catch (e) { window.API.toast('元信息加载失败：' + e.message, true); }
@@ -139,78 +129,7 @@
     h.forEach(x => hEl.appendChild(mkItem(x, false)));
   }
 
-  // ---------- TOP20 瀑布流 ----------
-  async function loadTop20(refresh) {
-    const grid = $('#top20-grid');
-    const dateEl = $('#top20-date');
-    dateEl.textContent = refresh ? '刷新中…' : '计算中…';
-    try {
-      const data = await window.API.top20(null, refresh);
-      const list = (data && Array.isArray(data.items)) ? data.items : [];
-      state.top20Loaded = true;
-      const dt = (data && data.date) || (state.meta && state.meta.latest_trade_date) || '';
-      dateEl.textContent = dt ? `（${dt}）` : '';
-      grid.innerHTML = '';
-      if (state.observer) state.observer.disconnect();
-      state.observer = new IntersectionObserver(onCardVisible, { rootMargin: '300px' });
-      (list || []).forEach(item => grid.appendChild(buildTop20Card(item)));
-    } catch (e) {
-      dateEl.textContent = '';
-      window.API.toast('TOP20 加载失败：' + e.message, true);
-    }
-  }
-
-  function buildTop20Card(item) {
-    const card = document.createElement('div');
-    card.className = 'top20-card kl-board';
-    const pct = item.change_pct;
-    const pctCls = pct > 0 ? 'up' : pct < 0 ? 'down' : '';
-    const pctCol = pct > 0 ? '#ef5350' : pct < 0 ? '#26a69a' : '#787b86';
-    card.innerHTML = `
-      <div class="kl-head">
-        <span class="rank-badge${item.rank <= 3 ? ' top3' : ''}">${item.rank}</span>
-        <span class="kl-title">${item.name}<span class="code">${item.ts_code}</span></span>
-        <span style="color:${pctCol};font-size:12px">${pct == null ? '' : (pct > 0 ? '+' : '') + pct + '%'}</span>
-        <span style="flex:1"></span>
-        <span class="score-badge">${item.score == null ? '—' : item.score}</span>
-      </div>
-      <div style="padding:8px 12px 0">
-        <div class="g-bars">${gBarsHtml(item.group_scores)}</div>
-      </div>
-      <div class="mini-slot" data-ts="${item.ts_code}"></div>
-      <div style="padding:0 12px 10px">
-        <div class="brief ${pctCls}">${item.analysis_brief || ''}</div>
-        <div class="card-actions"><button class="mini-btn" data-expand>展开完整看板 →</button></div>
-      </div>`;
-    card.querySelector('[data-expand]').addEventListener('click', () => openDetail(item.ts_code, item.name));
-    const slot = card.querySelector('.mini-slot');
-    if (state.observer) state.observer.observe(slot);
-    return card;
-  }
-
-  function gBarsHtml(gs) {
-    if (!gs) return '';
-    return Object.keys(G_LABELS).map(k => {
-      const v = gs[k];
-      if (v == null) return '';
-      const w = Math.min(100, Math.abs(v) / 3 * 100);
-      return `<div class="g-row" title="${G_LABELS[k]}">
-        <span class="g-name">${k}</span>
-        <span class="g-track"><span class="g-fill${v < 0 ? ' neg' : ''}" style="width:${w}%"></span></span>
-        <span class="g-val">${(+v).toFixed(2)}</span></div>`;
-    }).join('');
-  }
-
-  function onCardVisible(entries) {
-    for (const en of entries) {
-      if (!en.isIntersecting || en.target.dataset.loaded) continue;
-      en.target.dataset.loaded = '1';
-      state.observer.unobserve(en.target);
-      createMiniBoard(en.target, en.target.dataset.ts);
-    }
-  }
-
-  // ---------- 分页2：搜索 ----------
+  // ---------- 全市场搜索 ----------
   function initSearch() {
     const input = $('#search-input');
     let timer = null;
@@ -243,20 +162,9 @@
     }
   }
 
-  // ---------- 单标的全尺寸看板 ----------
-  function openDetail(tsCode, name) {
-    destroyBoard(state.detailBoard);
-    $('#detail-board-slot').innerHTML = '';
-    $('#detail-title').textContent = `${name || ''} ${tsCode}`;
-    showPage('detail');
-    state.detailBoard = createFullBoard($('#detail-board-slot'), tsCode);
-  }
-
   // ---------- 启动 ----------
   function init() {
     $$('.nav-btn').forEach(b => b.addEventListener('click', () => showPage(b.dataset.page)));
-    $('#detail-back').addEventListener('click', () => showPage(state.prevPage || 'board'));
-    $('#top20-refresh').addEventListener('click', () => loadTop20(true));
     $('#watch-add').addEventListener('click', toggleWatch);
     $('#history-clear').addEventListener('click', () => { writeLs(LS_HIST, []); renderSideLists(); });
     initSearch();

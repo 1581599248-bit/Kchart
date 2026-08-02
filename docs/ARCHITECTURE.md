@@ -8,9 +8,9 @@
 ## 0. 总目标
 
 桌面端本地网站「RYAN K线推背图」：
-- 分页1「指数看板」：宽基指数（上证指数/深证成指/创业板指/科创50/沪深300/中证500/中证1000/中证2000）单列展示 + 下方 TOP20 标的瀑布流（两列）。
-- 分页2「搜索」：全市场指数与个股检索（带索引/自动补全），点击任意标的进入完整K线看板。
+- 分页1「指数看板」：宽基指数（上证指数/深证成指/创业板指/科创50/沪深300/中证500/中证1000/中证2000）单列展示 + 下方全市场搜索/个股看板（自选股/搜索历史侧栏）。
 - 每个标的卡片：K线图（仅日线 + 指标）+ 图上推背图标注 + 图下精简文字分析（现况/走势/目标位/止盈止损）。
+- ~~分页2「TOP20」~~：TOP20 榜单功能已下线（前后端与 scripts/bake_top20.py 已删除），不得再引用；打分模型 scoring.py 保留（见 MODEL_DESIGN.md）。
 - ~~分页3「回测」~~：回测功能已下线（backtest.py 已删除），不得再引用。
 
 ## 1. 技术栈与目录
@@ -18,7 +18,7 @@
 - 后端：Python 3.12 + FastAPI + uvicorn + DuckDB + pandas + numpy + requests（venv 在 `.venv/`）。
 - 前端：原生 HTML/JS SPA，`frontend/vendor/lightweight-charts.standalone.production.js`（v4.2.3，已本地化，禁止 CDN）。
 - 无前端构建步骤；后端 `main.py` 直接静态托管 `frontend/`。
-- 数据源：**tushare 兼容 HTTP API**（见第 2 节）；派生数据写入 `data/results.duckdb`（独立研究结果库，仅存 analysis_cache/system_meta）；TOP20 榜单为本地烘焙静态文件 `data/baked_top20.json`（提交入仓）。
+- 数据源：**tushare 兼容 HTTP API**（见第 2 节）；派生数据写入 `data/results.duckdb`（独立研究结果库，仅存 analysis_cache/system_meta）；8 指数 K线/推背图为本地烘焙静态文件 `data/baked_charts.json`（提交入仓）。
 
 ```
 RYAN技术面K线模型/
@@ -38,8 +38,8 @@ RYAN技术面K线模型/
 │  ├─ index.html  css/app.css
 │  ├─ vendor/lightweight-charts.standalone.production.js
 │  └─ js/ api.js  chart.js  analysis_view.js  app.js
-├─ data/                    # results.duckdb、api_cache/（git 忽略）；baked_top20.json（提交入仓）
-└─ scripts/  bake_top20.py  # TOP20 本地烘焙脚本
+├─ data/                    # results.duckdb、api_cache/（git 忽略）；baked_charts.json（提交入仓）
+└─ scripts/  bake_charts.py   # 8 指数 K线/推背图烘焙（冷启动秒开）
 ```
 
 ## 2. 数据口径（硬约束）
@@ -185,24 +185,26 @@ RYAN技术面K线模型/
 **防未来函数**：全部输入为 `trade_date <= asof_date`；pivot/背离/结构只取右侧已确认事件；换手率/收益类因子用 t 日及以前数据，t+1 开盘执行。
 **防过拟合**：权重与参数全部固定写死为代码常量，不做历史拟合；任何参数变更必须记录试验序号 N 并更新 DSR 计算。
 **展示与预测分离**：MACD/KDJ/RSI 超买超卖/WR/BOLL/斐波那契/谐波只出现在 `/api/analysis` 的图上标注与文字分析中，score 公式不得引用 fibonacci.py / harmonics.py 的输出。
-- `make_analysis_brief(group_scores) -> str`：TOP20 榜单一句话解读（"XX面最强、XX面最弱"），烘焙脚本与旧网文案一致。
 
-### TOP20 打分链路（scripts/bake_top20.py，本地烘焙）
-服务端不做打分预计算；榜单 = 本地跑烘焙脚本生成静态文件并提交入仓：
-1. `trade_cal` 取最新交易日与全日历；窗口 = 最近 420 自然日（`--days` 可调）。
-2. `ThreadPoolExecutor(max_workers=6)` 逐交易日经 `ts_api.call_api` 拉全市场 `daily` + `adj_factor`（全窗口）与 `daily_basic`（最近 W+30 个交易日，W=250 为换手率因子最长窗口）；单日失败重试 2 次仍失败则跳过（最新日失败直接退出）。
-3. 拼面板：OHLC × f/窗口内最新 f（前复权口径同 ts_api.load_daily_qfq），join turnover_rate。
-4. 可投资域过滤：榜单日期当日 `days_since_listing>=120`（日历序号差）且 `median_amount_cny_20>=5e7`（amount×1000 的 20 日滚动中位数）的股票，保留其窗口内全部历史。
-5. `scoring.compute_raw_factors` → `compute_scores_panel(dates={榜单日})` 取 top N（`--topn`，默认 20），补 name/change_pct/analysis_brief。
-6. 写 `data/baked_top20.json`：`{"date":"YYYY-MM-DD","items":[{rank,ts_code,name,score,group_scores{G1..G5},change_pct,analysis_brief}]}`（UTF-8，ensure_ascii=False，**提交入仓**）。
-7. 榜单日期 = 面板内实际有数据的最新交易日（早盘运行时当天数据未发布，自动回退到有数据的最近交易日并打印提示）。**更新榜单 = 重跑脚本 + 提交 JSON。**
+（注：TOP20 榜单功能已下线，scoring.py 当前无线上调用方，模型保留详见 MODEL_DESIGN.md。）
+
+### 烘焙 K线/推背图（scripts/bake_charts.py → data/baked_charts.json，冷启动秒开）
+- 标的 = config.BROAD_INDEX_CODES 8 个宽基指数（固定范围），逐标的打印进度，失败警告跳过。
+- 每标的：`ts_api.load_index_daily` 全历史 1d bars（与 /api/bars 同形态同 time 口径）+ `analysis_mod.analyze` 全量结果（annotations 用 main `_annotations_to_epoch` 转 epoch，与 /api/analysis 响应完全同构）。
+- 输出单行 JSON：`{"date":最新交易日,"version":1,"symbols":{ts_code:{"kind":"index","name","bars":[...],"analysis":{...}}}}`，UTF-8，ensure_ascii=False，**提交入仓**（约 3MB）。
+- 服务端配合（main.py）：
+  - `_baked_charts()` 懒加载进内存，mtime 变化自动重读，线程安全；文件缺失按无烘焙处理。
+  - `_load_bars_df`：timeframe=1d 且标的在 baked 且 api_cache 无该标的 `index_daily_<code>.json` 缓存文件 → 直出 baked bars；缓存文件一旦由后台追新写入即切回 ts_api 实时路径。
+  - `/api/analysis`：timeframe=1d 且非 refresh 且请求窗口起点 ≤ 烘焙窗口起点（覆盖烘焙窗口）且（无 K线缓存文件或缓存最大日期 ≤ 烘焙 asof_date）→ 直出 baked analysis，否则走原实时逻辑。
+  - 启动时 `_warm_baked_symbols()` 起 daemon 线程：对 8 指数调 `load_index_daily` 增量拉 K线写 api_cache，随后逐指数预计算分析写 results_db（缓存键与端点一致 `1d@<api_cache第一根K线日期>#ANALYSIS_VERSION`）；全程 try/except，失败只记日志；无 TS_TOKEN 时整个 warmer 跳过。**更新 = 重跑脚本 + 提交 JSON。**
+- 个股（非 8 指数）不做烘焙：搜索进入的个股走 API 实时路径，首次冷拉取较慢（前端有"分析计算中"提示），属可接受。
 
 ### results_db.py（系统记忆）
 `data/results.duckdb` 表：
 - `analysis_cache(ts_code, timeframe, asof_date, result_json, computed_at)` 主键三列
 - `system_meta(key, value)`
 所有写入先查后写、幂等。接口：`save_analysis/get_analysis/set_meta/get_meta`。
-（scores_daily/backtest_runs/backtest_nav 已随打分烘焙化与回测下线移除。）
+（scores_daily/backtest_runs/backtest_nav 已随 TOP20 榜单与回测下线移除。）
 
 ### main.py（FastAPI）
 静态托管 frontend 于 `/`；API 前缀 `/api`：
@@ -210,10 +212,10 @@ RYAN技术面K线模型/
 - `GET /api/search?q=&limit=20` → [{ts_code,name,kind,market}]
 - `GET /api/bars?ts_code=&timeframe=1d|1w|1M&start=&end=` → {bars:[{time,o,h,l,c,v,amount}], name, currency_note}
   - time 为 UNIX 秒（UTC 口径按 lightweight-charts 约定）；**timeframe=60m 一律 400「API 版暂无 60 分钟线」**；前端只展示 1d，1w/1M 后端保留 resample 路径。
+  - 1d 且标的在 `baked_charts.json` 且本地无 api_cache K线缓存 → 直出烘焙 bars（冷启动秒回，见"烘焙 K线/推背图"一节）。
 - `GET /api/indicators?ts_code=&timeframe=` → 与 bars 对齐的 MA/EMA/BOLL/MACD/KDJ/RSI/WR/VOL 序列（前端只做渲染，不在前端算指标）。
-- `GET /api/analysis?ts_code=&timeframe=&refresh=0` → analysis.py 输出（走 results_db 的 analysis_cache，refresh=1 重算）。
-- `GET /api/top20?date=` → 读 `data/baked_top20.json`：存在且日期匹配返回 {status:"ok",date,items}，否则 {status:"computing",items:[]}（refresh 参数忽略，**不触发任何预计算**）。
-- 启动时检查 TS_TOKEN：未设置打印醒目中文警告但照常启动（/api/top20 烘焙榜单仍可用）；`TsApiError` 统一映射 503 + 中文 detail。
+- `GET /api/analysis?ts_code=&timeframe=&refresh=0` → analysis.py 输出（走 results_db 的 analysis_cache，refresh=1 重算）；1d 且窗口覆盖烘焙窗口且无更新 K线缓存时直出 `baked_charts.json` 的分析结果。
+- 启动时检查 TS_TOKEN：未设置打印醒目中文警告但照常启动（baked_charts 烘焙内容仍可用）；`TsApiError` 统一映射 503 + 中文 detail。
 
 ## 4. 前端规范
 
@@ -221,17 +223,16 @@ RYAN技术面K线模型/
 
 - `chart.js`：封装 lightweight-charts。**只保留日线周期**（TF_LIST 仅 1d，周期按钮行隐藏）；主图K线+MA/EMA/BOLL 叠加；副图窗格（VOL、MACD、KDJ、RSI、WR）用多 chart 同步 logical range（时间轴联动、十字光标联动）；支持滚轮缩放、拖拽平移、双击复位。**画线工具已整体删除**（无 drawing.js、无工具栏）。
 - `analysis_view.js`：把 `/api/analysis` 的 annotations 渲染成图上标记（markers + 线段 + 区域色带），星号信号用金色大号标记；hover 显示 detail；图下渲染 summary 分析卡——趋势/结构/动量/量能/关键位/目标止损各占独立一段（2026-08-01 起不再展示背景/交易尺度行），展望按句分段落。
-- `app.js`：两个分页切换（分页3「回测」已下线删除）。
-  - 分页1：顶部指数选择按钮行（8个宽基），单列指数看板（K线+推背图+文字分析）；下方 TOP20 瀑布流两列卡片：每卡含迷你K线、推背图标注、打分徽标与五因子组得分条形（.g-fill 需 display:block 否则不渲染）、精简分析。卡片懒加载（IntersectionObserver）。
-  - 分页2：搜索框（防抖 300ms，后端检索），结果列表（代码/名称/市场/类型），点击进入单标的大看板（与分页1卡片同组件，全尺寸）。
+- `app.js`：单页主控（TOP20 分页与 detail 页已随榜单下线删除）。
+  - 顶部指数选择按钮行（8个宽基），单列指数看板（K线+推背图+文字分析）；下方全市场搜索框（防抖 300ms，后端检索），结果列表（代码/名称/市场/类型），点击装入下方个股看板（与指数看板同组件，全尺寸）；右侧栏自选股/搜索历史（localStorage 持久化）。
 - 手机端布局保留（响应式媒体查询）。
 - 密度控制：图上同屏标注超过 12 个时按 star 优先聚合，其余收成时间轴下方小点，hover 展开。
 
 ## 5. 启动与运维
 
 - `启动看板.bat`：`.venv\Scripts\python.exe -m backend.app.main`（uvicorn 0.0.0.0:8600）→ 延迟 4 秒打开 `http://127.0.0.1:8600`。
-- 启动不预计算打分；榜单缺失时 /api/top20 返回 computing（前端轮询提示），需本地跑 `python scripts/bake_top20.py` 生成并提交 `data/baked_top20.json`。
-- TS_TOKEN 未设置：行情类接口 503，/api/top20 烘焙榜单与静态页面照常可用。
+- 8 指数 K线/推背图走 `data/baked_charts.json`（scripts/bake_charts.py 烘焙提交）：冷启动秒开；启动后 daemon 线程自动增量追新 K线并预计算指数分析缓存，追新完成后无缝切回实时数据。文件缺失时全部回退实时路径，仅首次加载较慢。
+- TS_TOKEN 未设置：行情类接口 503，baked_charts 烘焙内容照常可用，warmer 跳过。
 
 ## 6. 质量红线
 

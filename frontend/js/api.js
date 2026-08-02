@@ -52,6 +52,5 @@
     bars:       (ts_code, timeframe, start, end) => get('/bars', { ts_code, timeframe, start, end }),
     indicators: (ts_code, timeframe) => get('/indicators', { ts_code, timeframe }),
     analysis:   (ts_code, timeframe, refresh, start) => get('/analysis', { ts_code, timeframe, start, refresh: refresh ? 1 : 0 }),
-    top20:      (date, refresh) => get('/top20', { date, refresh: refresh ? 1 : 0 }),
   };
 })();

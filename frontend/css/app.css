@@ -90,24 +90,6 @@ main { padding: 12px 16px 60px; max-width: 1500px; margin: 0 auto; }
   border: 1px solid var(--gold); border-radius: 4px; padding: 6px 10px; font-size: 12px;
   line-height: 1.5; pointer-events: none; display: none; box-shadow: 0 4px 12px rgba(0,0,0,.5); }
 
-/* TOP20 瀑布流 */
-.top20-grid { column-count: 2; column-gap: 14px; }
-.top20-card { break-inside: avoid; margin-bottom: 14px; }
-.rank-badge { display: inline-flex; align-items: center; justify-content: center;
-  min-width: 26px; height: 22px; border-radius: 3px; background: var(--panel2);
-  color: var(--dim); font-weight: 700; font-size: 12px; margin-right: 6px; }
-.rank-badge.top3 { background: var(--gold); color: #131722; }
-.score-badge { color: var(--gold); font-weight: 700; font-size: 15px; }
-.g-bars { display: flex; flex-direction: column; gap: 3px; margin: 8px 0; font-size: 11px; }
-.g-row { display: flex; align-items: center; gap: 6px; }
-.g-row .g-name { width: 26px; color: var(--dim); }
-.g-row .g-track { flex: 1; height: 8px; background: var(--grid); border-radius: 2px; overflow: hidden; }
-.g-row .g-fill { display: block; height: 100%; background: var(--up); border-radius: 2px; }
-.g-row .g-fill.neg { background: var(--down); }
-.g-row .g-val { width: 36px; text-align: right; color: var(--dim); }
-.brief { font-size: 12px; color: var(--dim); line-height: 1.6; padding: 6px 0; }
-.card-actions { display: flex; gap: 8px; padding: 0 0 4px; }
-
 /* 搜索页 */
 .search-wrap { margin: 12px 0; display: flex; align-items: center; gap: 12px; }
 #search-input { width: 420px; background: var(--panel); border: 1px solid var(--border);
@@ -120,10 +102,6 @@ main { padding: 12px 16px 60px; max-width: 1500px; margin: 0 auto; }
 .data-table th { color: var(--dim); font-weight: 400; background: var(--panel2); }
 .data-table tbody tr { cursor: pointer; }
 .data-table tbody tr:hover { background: var(--panel2); }
-
-/* 详情页 */
-.detail-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-.detail-title { font-size: 16px; font-weight: 700; }
 
 /* 第一页：个股K线 + 右侧栏（自选股/搜索历史） */
 .board-row { display: flex; gap: 14px; align-items: flex-start; }
@@ -156,7 +134,6 @@ main { padding: 12px 16px 60px; max-width: 1500px; margin: 0 auto; }
 .toast.err { border-color: var(--down); }
 
 @media (max-width: 1100px) {
-  .top20-grid { column-count: 1; }
   .board-row { flex-direction: column; }
   #side-panel { width: 100%; flex-direction: row; }
   .sp-block { flex: 1; }

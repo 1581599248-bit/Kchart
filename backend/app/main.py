@@ -1,13 +1,14 @@
 """FastAPI 入口（ARCHITECTURE.md 第3节 main.py 规范）。
 
 静态托管 frontend/ 于 /；API 前缀 /api。
-已实现：/api/meta /api/search /api/bars /api/indicators /api/analysis /api/top20。
+已实现：/api/meta /api/search /api/bars /api/indicators /api/analysis。
 
 数据源：backend/app/ts_api.py（tushare 兼容 HTTP API + 本地磁盘缓存），
 token 从环境变量 TS_TOKEN 读取。60m 周期 API 版暂不支持（一律 400）。
 
-TOP20：本地烘焙脚本 scripts/bake_top20.py 生成静态文件 data/baked_top20.json，
-/api/top20 只读该文件，不在服务端触发任何预计算。
+8 宽基指数的 1d K线与推背图分析为本地烘焙静态文件 data/baked_charts.json
+（scripts/bake_charts.py 生成提交）：冷启动直出烘焙数据秒回，启动后后台线程
+增量追新，追新完成自动切回实时数据。
 
 时间口径说明：
 - time 输出 UNIX 秒整数。日线取当日 00:00；
@@ -19,6 +20,7 @@ import datetime as dt
 import json
 import logging
 import math
+import threading
 
 import numpy as np
 import pandas as pd
@@ -54,18 +56,69 @@ _INDICATOR_COLS = [
     "ROC20", "ROC60",
 ]
 
-# TOP20 烘焙产物（scripts/bake_top20.py 生成，提交进 git）
-_BAKED_TOP20 = config.DATA_DIR / "baked_top20.json"
+# ---------------- 烘焙 K线/分析（data/baked_charts.json，冷启动秒开） ----------------
+
+_BAKED_CHARTS_PATH = config.DATA_DIR / "baked_charts.json"
+_baked_state = {"mtime": None, "data": {}}
+_baked_lock = threading.Lock()
+
+
+def _baked_charts() -> dict:
+    """懒加载 data/baked_charts.json 进内存（mtime 变化自动重读，线程安全）；不存在返回 {}。"""
+    try:
+        mtime = _BAKED_CHARTS_PATH.stat().st_mtime
+    except OSError:
+        with _baked_lock:
+            _baked_state["mtime"] = None
+            _baked_state["data"] = {}
+        return {}
+    if _baked_state["mtime"] == mtime:
+        return _baked_state["data"]
+    with _baked_lock:
+        if _baked_state["mtime"] == mtime:
+            return _baked_state["data"]
+        try:
+            payload = json.loads(_BAKED_CHARTS_PATH.read_text(encoding="utf-8"))
+            data = payload.get("symbols") or {}
+        except (OSError, ValueError):
+            log.exception("baked_charts.json 读取失败，按无烘焙处理")
+            data = {}
+        _baked_state["data"] = data
+        _baked_state["mtime"] = mtime
+        if data:
+            log.info("baked_charts.json 已加载：%d 只标的", len(data))
+        return data
+
+
+def _kline_cache_file(ts_code: str):
+    """该标的在 api_cache 的 K线缓存文件路径（指数/个股按 is_index 区分）。"""
+    name = f"index_daily_{ts_code}" if ts_api.is_index(ts_code) else f"daily_{ts_code}"
+    return ts_api._cache_path(name)
+
+
+def _baked_bars_df(entry: dict, start, end) -> pd.DataFrame:
+    """baked bars（epoch 秒）→ 与 ts_api 返回一致的 df（trade_date datetime64 + OHLCV），按 [start,end] 裁剪。"""
+    df = pd.DataFrame(entry.get("bars") or [])
+    if df.empty:
+        return pd.DataFrame(columns=["trade_date", "open", "high", "low", "close", "vol", "amount"])
+    df["trade_date"] = pd.to_datetime(df["time"], unit="s")
+    df = df.rename(columns={"o": "open", "h": "high", "l": "low", "c": "close", "v": "vol"})
+    df = df[["trade_date", "open", "high", "low", "close", "vol", "amount"]]
+    if start is not None:
+        df = df[df["trade_date"] >= pd.Timestamp(str(start)[:10])]
+    if end is not None:
+        df = df[df["trade_date"] <= pd.Timestamp(str(end)[:10])]
+    return df.sort_values("trade_date").reset_index(drop=True)
 
 
 # ---------------- 启动校验 ----------------
 
 def _startup_check() -> None:
     if not config.TS_TOKEN:
-        # 未设 token 时行情类接口不可用，但 /api/top20 的烘焙数据仍可读，照常启动
+        # 未设 token 时行情类接口不可用，但烘焙内容（baked_charts）仍可读，照常启动
         log.warning("=" * 60)
         log.warning("未设置环境变量 TS_TOKEN：行情接口（bars/indicators/analysis/search）")
-        log.warning("将不可用；/api/top20 烘焙榜单不受影响。请设置 TS_TOKEN 后重启。")
+        log.warning("将不可用；烘焙的指数 K线/推背图不受影响。请设置 TS_TOKEN 后重启。")
         log.warning("=" * 60)
     else:
         try:
@@ -74,6 +127,76 @@ def _startup_check() -> None:
             log.exception("启动时获取最新交易日失败（首次请求时会重试）")
     results_db.get_con().close()  # 建 results 库（analysis 缓存）
     log.info("model_version: %s | TS_URL: %s", config.MODEL_VERSION, config.TS_URL)
+    _warm_baked_symbols()
+
+
+# ---------------- 后台追新（冷启动用烘焙，追新后切实时） ----------------
+
+def _warm_baked_symbols() -> None:
+    """启动 daemon 线程对 baked 标的增量追新；TS_TOKEN 缺失或无烘焙文件时跳过。"""
+    if not config.TS_TOKEN:
+        log.info("无 TS_TOKEN，跳过 baked 标的追新")
+        return
+    symbols = list(_baked_charts().keys())
+    if not symbols:
+        return
+    threading.Thread(target=_warm_worker, args=(symbols,), daemon=True,
+                     name="baked-warmer").start()
+    log.info("baked 追新线程已启动：%d 只标的", len(symbols))
+
+
+def _warm_worker(symbols: list) -> None:
+    """逐标的增量拉 K 线写 api_cache（semaphore 限并发），再预计算 8 指数分析缓存。
+
+    全部 try/except 包裹：失败只记日志，不影响服务。
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    sem = threading.Semaphore(4)
+
+    def _fetch(code):
+        with sem:
+            try:
+                if ts_api.is_index(code):
+                    ts_api.load_index_daily(code)
+                else:
+                    ts_api.load_daily_qfq(code)
+            except Exception:
+                log.exception("追新失败（跳过）: %s", code)
+
+    try:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            list(ex.map(_fetch, symbols))
+        log.info("baked 标的 K线追新完成（%d 只），开始预计算指数分析缓存", len(symbols))
+    except Exception:
+        log.exception("baked 追新阶段失败")
+
+    # 8 指数分析预计算：缓存键与端点一致 1d@<缓存第一根K线日期>#ANALYSIS_VERSION
+    try:
+        from . import analysis as analysis_mod
+        for code in config.BROAD_INDEX_CODES:
+            try:
+                df = _load_bars_df(code, "1d", None, None)
+                if df.empty or len(df) < 60:
+                    continue
+                asof = str(pd.to_datetime(df["ts"].iloc[-1]).date())
+                start_d = str(pd.to_datetime(df["ts"].iloc[0]).date())
+                cache_tf = f"1d@{start_d}#{analysis_mod.ANALYSIS_VERSION}"
+                if results_db.get_analysis(code, cache_tf, asof) is not None:
+                    continue
+                result = analysis_mod.analyze(df.rename(columns={"ts": "trade_date"}), "1d")
+                result["annotations"] = _annotations_to_epoch(result["annotations"], df)
+                result["ts_code"] = code
+                result["timeframe"] = "1d"
+                result["asof_date"] = asof
+                result["name"] = ts_api.get_security_name(code)
+                results_db.save_analysis(code, cache_tf, asof, result)
+                log.info("指数分析缓存已预计算: %s asof=%s", code, asof)
+            except Exception:
+                log.exception("指数分析预计算失败（跳过）: %s", code)
+        log.info("warmer 全部完成")
+    except Exception:
+        log.exception("指数分析预计算阶段失败")
 
 
 # ---------------- 数据装载 ----------------
@@ -82,6 +205,12 @@ def _load_bars_df(ts_code: str, timeframe: str, start, end) -> pd.DataFrame:
     """按标的类型与时间粒度装载 bars DataFrame（含 trade_date + OHLCV，输出列名 ts）。"""
     if timeframe == "60m":
         raise HTTPException(400, "API 版暂无 60 分钟线")
+    if timeframe == "1d":
+        # 冷启动无本地 K线缓存时直出烘焙数据；后台追新写入 api_cache 后自动切回实时路径
+        entry = _baked_charts().get(ts_code)
+        if entry is not None and not _kline_cache_file(ts_code).exists():
+            df = _baked_bars_df(entry, start, end)
+            return df.rename(columns={"trade_date": "ts"})
     df = (ts_api.load_index_daily(ts_code, start, end) if ts_api.is_index(ts_code)
           else ts_api.load_daily_qfq(ts_code, start, end))
     if timeframe in ("1w", "1M"):
@@ -233,6 +362,28 @@ def _annotations_to_epoch(annotations: list, df: pd.DataFrame) -> list:
     return annotations
 
 
+def _baked_analysis_usable(ts_code: str, entry: dict, start_d) -> bool:
+    """baked analysis 是否可直接回：请求窗口覆盖烘焙窗口，且本地无更新的 K线缓存。"""
+    baked = entry.get("analysis")
+    bars = entry.get("bars") or []
+    if not baked or not bars:
+        return False
+    first_d = dt.datetime.utcfromtimestamp(bars[0]["time"]).date()  # 烘焙分析窗口起点
+    if start_d > first_d:
+        return False  # 请求窗口未覆盖烘焙窗口（比烘焙更短的窗口不走烘焙，保持与实时计算口径一致）
+    p = _kline_cache_file(ts_code)
+    if not p.exists():
+        return True   # 冷启动：无追新缓存，烘焙即最新
+    # 已有追新缓存：缓存最大日期不新于烘焙 asof 时才仍用烘焙
+    try:
+        rows = json.loads(p.read_text(encoding="utf-8")).get("rows") or []
+        max_d = max((r["trade_date"] for r in rows), default=None)
+    except (OSError, ValueError):
+        return False
+    baked_asof = str(baked.get("asof_date") or "").replace("-", "")
+    return bool(max_d and baked_asof) and max_d <= baked_asof
+
+
 @app.get("/api/analysis")
 def api_analysis(
     ts_code: str,
@@ -249,6 +400,14 @@ def api_analysis(
         start_d = ts_api.latest_trade_date() - dt.timedelta(days=lookback)
     else:
         start_d = dt.datetime.strptime(start[:10], "%Y-%m-%d").date()
+
+    # 烘焙直出（冷启动秒回）：窗口覆盖且本地无更新 K线缓存时
+    if timeframe == "1d" and not refresh:
+        entry = _baked_charts().get(ts_code)
+        if entry and _baked_analysis_usable(ts_code, entry, start_d):
+            result = entry["analysis"]
+            result.setdefault("name", entry.get("name") or ts_api.get_security_name(ts_code))
+            return result
 
     df = _load_bars_df(ts_code, timeframe, start_d, None)
     if df.empty or len(df) < 60:
@@ -275,27 +434,6 @@ def api_analysis(
     except Exception:
         log.exception("analysis 缓存写入失败（不影响返回）")
     return result
-
-
-# ---------------- TOP20 榜单（本地烘焙静态文件） ----------------
-
-@app.get("/api/top20")
-def api_top20(date: str | None = None, refresh: int = 0):
-    """读 scripts/bake_top20.py 烘焙的 data/baked_top20.json；refresh 参数忽略。
-
-    文件不存在（或请求日期与榜单日期不符）时返回 computing，前端沿用现有轮询提示，
-    服务端不再触发任何预计算——榜单更新靠本地跑烘焙脚本并提交 JSON。
-    """
-    payload = None
-    if _BAKED_TOP20.exists():
-        try:
-            payload = json.loads(_BAKED_TOP20.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            log.exception("baked_top20.json 读取失败")
-    if payload is None or (date and date != payload.get("date")):
-        return {"status": "computing", "items": []}
-    return {"status": "ok", "date": payload.get("date"),
-            "items": payload.get("items", [])}
 
 
 # 静态托管 frontend/ 于 /（挂载在 API 路由之后）
