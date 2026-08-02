@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.gzip import GZipMiddleware
 
 from . import config, indicators, resample, results_db, ts_api
 from .ts_api import TsApiError
@@ -34,6 +35,8 @@ log = logging.getLogger("ryan.main")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 app = FastAPI(title="RYAN K线推背图", version=config.MODEL_VERSION)
+# K线/推背图响应几百 KB 的 JSON，gzip 后传输量降约 5 倍（线上跨网段提速明显）
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.exception_handler(TsApiError)
