@@ -183,7 +183,8 @@ def _warm_worker(symbols: list) -> None:
                 if df.empty or len(df) < 60:
                     continue
                 asof = str(pd.to_datetime(df["ts"].iloc[-1]).date())
-                start_d = str(pd.to_datetime(df["ts"].iloc[0]).date())
+                # 缓存键与端点缺省窗口一致（KLINE_DISPLAY_START），预热才能命中
+                start_d = config.KLINE_DISPLAY_START
                 cache_tf = f"1d@{start_d}#{analysis_mod.ANALYSIS_VERSION}"
                 if results_db.get_analysis(code, cache_tf, asof) is not None:
                     continue
@@ -405,8 +406,8 @@ def api_analysis(
     if timeframe not in _TIMEFRAMES:
         raise HTTPException(400, f"timeframe 须为 {sorted(_TIMEFRAMES)} 之一")
     if start is None:
-        lookback = _ANALYSIS_LOOKBACK[timeframe]
-        start_d = ts_api.latest_trade_date() - dt.timedelta(days=lookback)
+        # 缺省窗口 = 展示下限（前端分析请求与K线并行发出，不再显式传 start）
+        start_d = dt.date.fromisoformat(config.KLINE_DISPLAY_START)
     else:
         start_d = dt.datetime.strptime(start[:10], "%Y-%m-%d").date()
 

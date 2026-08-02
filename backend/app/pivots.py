@@ -63,29 +63,34 @@ def pivots_asof(pivots: pd.DataFrame, asof_bar: int) -> pd.DataFrame:
 
 
 def alternating(pivots: pd.DataFrame) -> pd.DataFrame:
-    """把原始 pivot 序列交替化：同kind相邻者保留更极端的一个。"""
-    rows = []
-    for _, r in pivots.iterrows():
-        d = r.to_dict()
-        if not rows:
-            rows.append(d)
+    """把原始 pivot 序列交替化：同kind相邻者保留更极端的一个。
+
+    numpy 向量化实现（find_patterns_history 每个确认时点都调用，iterrows 曾是主热点）。
+    语义与原 iterrows 版完全一致：同kind并列时后者取代前者（>=/<= 取新）。
+    """
+    cols = ["idx", "trade_date", "price", "kind", "confirmed_at_idx"]
+    if not len(pivots):
+        return pd.DataFrame(columns=cols)
+    kind = pivots["kind"].to_numpy()
+    price = pivots["price"].to_numpy(dtype=float)
+    keep: list[int] = []
+    for j in range(len(pivots)):
+        if not keep:
+            keep.append(j)
             continue
-        last = rows[-1]
-        if d["kind"] == last["kind"]:
-            more_extreme = (d["kind"] == "H" and d["price"] >= last["price"]) or (
-                d["kind"] == "L" and d["price"] <= last["price"]
+        l = keep[-1]
+        if kind[j] == kind[l]:
+            more_extreme = (kind[j] == "H" and price[j] >= price[l]) or (
+                kind[j] == "L" and price[j] <= price[l]
             )
             if more_extreme:
-                rows[-1] = d
+                keep[-1] = j
         else:
-            rows.append(d)
-    cols = ["idx", "trade_date", "price", "kind", "confirmed_at_idx"]
-    if not rows:
-        return pd.DataFrame(columns=cols)
-    out = pd.DataFrame(rows)[cols]
+            keep.append(j)
+    out = pivots.iloc[keep, :][cols].reset_index(drop=True)
     out["idx"] = out["idx"].astype(int)
     out["confirmed_at_idx"] = out["confirmed_at_idx"].astype(int)
-    return out.reset_index(drop=True)
+    return out
 
 
 def zigzag(df: pd.DataFrame, min_pct: float = ZZ_MIN_PCT, left: int = LEFT, right: int = RIGHT) -> pd.DataFrame:
@@ -98,34 +103,32 @@ def zigzag(df: pd.DataFrame, min_pct: float = ZZ_MIN_PCT, left: int = LEFT, righ
     piv = find_pivots(df, left=left, right=right)
     if not len(piv):
         return piv
-    zz: list[dict] = []
-    for _, r in piv.iterrows():
-        d = r.to_dict()
-        if not zz:
-            zz.append(d)
+    # numpy 向量化（语义同原 iterrows 版：同向取更极端者，反向幅度达标才开新腿）
+    kind = piv["kind"].to_numpy()
+    price = piv["price"].to_numpy(dtype=float)
+    keep: list[int] = []
+    for j in range(len(piv)):
+        if not keep:
+            keep.append(j)
             continue
-        last = zz[-1]
-        if d["kind"] == last["kind"]:
+        l = keep[-1]
+        if kind[j] == kind[l]:
             # 同向延伸：保留更极端者（当前腿仍在发展中）
-            if (d["kind"] == "H" and d["price"] >= last["price"]) or (
-                d["kind"] == "L" and d["price"] <= last["price"]
+            if (kind[j] == "H" and price[j] >= price[l]) or (
+                kind[j] == "L" and price[j] <= price[l]
             ):
-                zz[-1] = d
+                keep[-1] = j
             continue
         # 反向 pivot：幅度达标才确认一条新腿
-        move = abs(d["price"] / last["price"] - 1.0)
-        if move >= min_pct:
-            zz.append(d)
-        else:
-            # 幅度不足：若反向失败后价格继续沿原方向走出更极端 pivot，
-            # 上面的同kind分支会在后续迭代中自然更新 last，无需特殊处理。
-            continue
+        if abs(price[j] / price[l] - 1.0) >= min_pct:
+            keep.append(j)
+        # 幅度不足：跳过；后续同kind pivot 会在上面分支自然更新末端
     cols = ["idx", "trade_date", "price", "kind", "confirmed_at_idx"]
-    out = pd.DataFrame(zz, columns=cols) if zz else pd.DataFrame(columns=cols)
+    out = piv.iloc[keep, :][cols].reset_index(drop=True) if keep else pd.DataFrame(columns=cols)
     if len(out):
         out["idx"] = out["idx"].astype(int)
         out["confirmed_at_idx"] = out["confirmed_at_idx"].astype(int)
-    return out.reset_index(drop=True)
+    return out
 
 
 # ---- 多尺度自适应（ARCHITECTURE.md 多尺度自适应分析 §1-2） ----

@@ -283,6 +283,10 @@
       if (tsCode) this.tsCode = tsCode;
       if (!this.tsCode) return;
       this.setLoading(true);
+      // 推背图与K线并行发出（分析窗口由后端缺省=展示下限，无需等首根K线日期）；
+      // _barsReady 门控：分析结果先到时也要等K线就位再画标注
+      this._barsReady = new Promise(r => { this._barsReadyResolve = r; });
+      if (this.analysisView) this.analysisView.load();
       try {
         const [barsResp, indRaw] = await Promise.all([
           window.API.bars(this.tsCode, this.timeframe),
@@ -301,6 +305,7 @@
         this.mainChart.timeScale().fitContent();
         this._resyncRange();
         this._updateLegend(this.bars[this.bars.length - 1]);
+        if (this._barsReadyResolve) this._barsReadyResolve();
         this._afterData();
       } catch (e) {
         window.API.toast('行情加载失败：' + e.message, true);
@@ -310,8 +315,7 @@
     }
 
     _afterData() {
-      // 推背图挂载点（由 app.js 按需装配）
-      if (this.analysisView) this.analysisView.load();
+      // 数据就位后的钩子（推背图已在 load() 起始并行发出，此处不再重复触发）
     }
 
     _renderOverlays() {

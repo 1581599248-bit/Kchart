@@ -23,7 +23,7 @@ TS_TOKEN = os.environ.get("TS_TOKEN", "")                    # 禁止写进代�
 TS_URL = os.environ.get("TS_URL", "https://ts.gyzcloud.top/api")
 TS_MIN_INTERVAL = float(os.environ.get("TS_MIN_INTERVAL", 0.45))  # 最小调用间隔秒（≈133次/分）
 TS_MAX_INFLIGHT = int(os.environ.get("TS_MAX_INFLIGHT", 2))      # 同时在飞请求数上限（上游有并发限制）
-KLINE_EARLIEST = os.environ.get("KLINE_EARLIEST", "20180101")    # K线拉取最早日期：全量拉取从该日起（比展示窗口多留 2 年指标 warmup）
+KLINE_EARLIEST = os.environ.get("KLINE_EARLIEST", "20200101")    # K线拉取最早日期：空缓存全量拉取从该日起（指数/个股一致，2020 起，加载更快）
 KLINE_DISPLAY_START = os.environ.get("KLINE_DISPLAY_START", "2020-01-01")  # 图上展示/烘焙只从该日起（缩短加载）
 
 # 分页1顶部 8 个宽基指数

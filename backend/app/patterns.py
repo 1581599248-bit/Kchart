@@ -36,6 +36,9 @@ DOUBLE_MAX_GAP_W = 60    # 周线≤60根（≈14个月）
 DOUBLE_MIN_DEPTH = 0.08  # 双底/双顶中间反弹最小幅度（相对较低底；文献≥10%，A股指数放宽）
 PRIOR_TREND_PCT = 0.08   # 前置趋势：进入反转形态前的最小顺向幅度
 PRIOR_TREND_BARS = 60    # 前置趋势回看窗口（根）
+POS_BARS = 250           # 位置判定回看窗口（根）：反转形态只在高位/低位成立
+TOP_POS_MIN = 0.60       # 顶部反转：形态极点须在窗口区间上部（分位 ≥ 0.60）
+BOT_POS_MAX = 0.40       # 底部反转：形态极点须在窗口区间下部（分位 ≤ 0.40）
 TRIPLE_TOL = 0.03        # 三重底三低点离散度上限
 TRIPLE_MIN_DEPTH = 0.06  # 三重底最小深度（相对最低底）
 HS_MIN_DEPTH = 0.06      # 头肩头到颈线最小深度（相对颈线）
@@ -131,19 +134,39 @@ def _ev(kind, name, direction, start_idx, end_idx, confirm_idx, key_levels, note
 
 # ---------- 反转结构（基于交替 pivot 序列的几何关系） ----------
 
+def _position_ok(df: pd.DataFrame, idx: int, price: float, direction: str) -> bool:
+    """位置校验：顶部形态只在高位成立，底部形态只在低位成立。
+
+    形态极点在 POS_BARS 窗口价格区间 [最低low, 最高high] 中的分位：
+    顶部（bear）须 >= TOP_POS_MIN，底部（bull）须 <= BOT_POS_MAX——
+    中位的双顶/头肩顶是整理而非顶部反转（镜像同理），不提供错误信息。
+    """
+    i = int(idx)
+    lo = max(0, i - POS_BARS)
+    seg_hi = float(df["high"].to_numpy(dtype=float)[lo : i + 1].max())
+    seg_lo = float(df["low"].to_numpy(dtype=float)[lo : i + 1].min())
+    if seg_hi <= seg_lo:
+        return True
+    pos = (price - seg_lo) / (seg_hi - seg_lo)
+    return pos >= TOP_POS_MIN if direction == "bear" else pos <= BOT_POS_MAX
+
+
 def _prior_trend_ok(df: pd.DataFrame, pivot: dict, direction: str) -> bool:
-    """反转形态的前置趋势校验（没有前置趋势就没有"反转"可言）。
+    """反转形态的前置趋势 + 位置校验（没有前置趋势就没有"反转"可言；
+    顶部形态只在高位成立，底部形态只在低位成立）。
 
     底部反转（bull）要求 PRIOR_TREND_BARS 窗口内曾出现比 pivot 高 PRIOR_TREND_PCT 的高点
-    （即形态是跌出来的）；顶部反转（bear）镜像。
+    （即形态是跌出来的）；顶部反转（bear）镜像。位置由 _position_ok 判定。
     """
     i = int(pivot["idx"])
     lo = max(0, i - PRIOR_TREND_BARS)
     if direction == "bull":
         ref = float(df["high"].to_numpy(dtype=float)[lo : i + 1].max())
-        return ref >= pivot["price"] * (1 + PRIOR_TREND_PCT)
-    ref = float(df["low"].to_numpy(dtype=float)[lo : i + 1].min())
-    return ref <= pivot["price"] * (1 - PRIOR_TREND_PCT)
+        trend_ok = ref >= pivot["price"] * (1 + PRIOR_TREND_PCT)
+    else:
+        ref = float(df["low"].to_numpy(dtype=float)[lo : i + 1].min())
+        trend_ok = ref <= pivot["price"] * (1 - PRIOR_TREND_PCT)
+    return trend_ok and _position_ok(df, i, float(pivot["price"]), direction)
 
 
 def _pair_bottom(ap: list[dict], e: int, closes: np.ndarray, n: int, df: pd.DataFrame,

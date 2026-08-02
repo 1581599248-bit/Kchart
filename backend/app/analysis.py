@@ -9,8 +9,8 @@ analyze(df, timeframe) -> AnalysisResult：
 口径与纪律：
 - 全部信号只依赖当前及历史行；结构/背离/谐波只消费右侧已确认事件
   （各子模块内部已强制，本层不再引入任何未来数据）。
-- star=True 仅用于：已确认的主要结构突破、回踩颈线确认、已确认背离、
-  进入谐波 PRZ、关键斐波那契位（golden pocket）企稳。
+- star=True 仅用于：已确认的结构突破/破位（颈线/边界）、谐波反转（D点/进入 PRZ）。
+  其余信号（RSI 超买超卖、EMA 交叉、背离、回踩确认、斐波那契位）一律不打星。
 - 密度控制：同一 10 根K线窗口内同类（kind）信号只保留最重要的一个
   （star 优先，其次 score，再次更近者）。
 - fibonacci / harmonics 仅展示（零打分权重，见 MODEL_DESIGN.md），
@@ -31,7 +31,7 @@ from . import indicators
 from . import patterns as pat_mod
 from . import pivots as piv_mod
 
-ANALYSIS_VERSION = "analysis_v4.3"   # 分析算法版本：改动识别/标注/结论逻辑时递增，缓存键引用
+ANALYSIS_VERSION = "analysis_v4.4"   # 分析算法版本：改动识别/标注/结论逻辑时递增，缓存键引用
 
 DIV_STAR_AGE = 40         # 背离确认后多少根内仍给 star（已废弃，保留兼容）
 DENSITY_WINDOW = 10       # 密度控制窗口（根）
@@ -76,7 +76,7 @@ def _indicator_signals(d: pd.DataFrame) -> list[dict]:
             ob_peak, ob_hi = r1, float(high[i])
             ev.append({"bar_idx": i, "time": _date_str(d, i), "price": float(high[i]),
                        "kind": "indicator", "label": "RSI6超买",
-                       "direction": "bear", "star": bool(r1 >= 95),
+                       "direction": "bear", "star": False,
                        "detail": (f"RSI6={r1:.0f} 上穿 90 进入超买区，短线过热、追高需谨慎；"
                                   f"RSI 跌回 90 下方为衰竭确认，回踩 MA20{m_txt} 不破则趋势未坏"),
                        "_score": 58, "_grp": "rsi_ob_in"})
@@ -86,7 +86,7 @@ def _indicator_signals(d: pd.DataFrame) -> list[dict]:
             if ob_peak >= 93:
                 ev.append({"bar_idx": i, "time": _date_str(d, i), "price": float(high[i]),
                            "kind": "indicator", "label": "RSI6超买衰竭",
-                           "direction": "bear", "star": bool(ob_peak >= 96),
+                           "direction": "bear", "star": False,
                            "detail": (f"超买衰竭确认：RSI6 自峰值 {ob_peak:.0f} 跌回 90 下方，短线防回调；"
                                       f"区间高点 {ob_hi:.2f} 不能放量收复则回调延续"),
                            "_score": 62, "_grp": "rsi_ob_out"})
@@ -98,7 +98,7 @@ def _indicator_signals(d: pd.DataFrame) -> list[dict]:
             os_trough, os_lo = r1, float(low[i])
             ev.append({"bar_idx": i, "time": _date_str(d, i), "price": float(low[i]),
                        "kind": "indicator", "label": "RSI6超卖",
-                       "direction": "bull", "star": bool(r1 <= 5),
+                       "direction": "bull", "star": False,
                        "detail": (f"RSI6={r1:.0f} 下穿 10 进入超卖区，杀跌过度；"
                                   f"RSI 升回 10 上方为修复确认，反抽 MA20{m_txt} 不过则弱势未改"),
                        "_score": 58, "_grp": "rsi_os_in"})
@@ -108,7 +108,7 @@ def _indicator_signals(d: pd.DataFrame) -> list[dict]:
             if os_trough <= 7:
                 ev.append({"bar_idx": i, "time": _date_str(d, i), "price": float(low[i]),
                            "kind": "indicator", "label": "RSI6超卖修复",
-                           "direction": "bull", "star": bool(os_trough <= 4),
+                           "direction": "bull", "star": False,
                            "detail": (f"超卖修复确认：RSI6 自谷值 {os_trough:.0f} 升回 10 上方，短线有修复反弹；"
                                       f"区间低点 {os_lo:.2f} 失守则修复失败"),
                            "_score": 62, "_grp": "rsi_os_out"})
@@ -138,13 +138,15 @@ def _trend_cross_signals(d: pd.DataFrame) -> list[dict]:
                    "kind": "trend",
                    "label": "EMA20金叉EMA60" if golden else "EMA20死叉EMA60",
                    "direction": "bull" if golden else "bear",
-                   "star": bool(a >= 25),
+                   "star": False,
                    "detail": (f"EMA20({'%.2f' % ema20[i]}){'上穿' if golden else '下穿'}"
                               f"EMA60({'%.2f' % ema60[i]})，中期趋势{'转多' if golden else '转空'}"
                               f"（ADX={a:.0f}）；"
                               + (f"回调看 EMA60 动态支撑，死叉则转多失败" if golden
                                  else f"反弹看 EMA60 动态压力，金叉则转空失败")),
-                   "_score": 62, "_grp": "trend_cross"})
+                   # 交叉是离散的交替事件，_grp 按事件唯一化：
+                   # 不参与密度去重，否则金叉会被邻近死叉挤掉（序列失真）
+                   "_score": 62, "_grp": f"trend_cross:{i}"})
     return ev
 
 
@@ -305,7 +307,7 @@ def _fib_annotations(d: pd.DataFrame, fib) -> list[dict]:
     if fib["golden_pocket"]:
         lo, hi = fib["golden_pocket_zone"]
         return [{"bar_idx": asof, "time": _date_str(d, asof), "price": close,
-                 "kind": "fib", "label": "黄金口袋", "direction": direction, "star": True,
+                 "kind": "fib", "label": "黄金口袋", "direction": direction, "star": False,
                  "detail": (f"现价 {close:.2f} 落入{anchor}的 0.618~0.65 回撤区"
                             f"（{min(lo, hi):.2f}~{max(lo, hi):.2f}），黄金口袋"
                             f"{'企稳位，重点关注止跌信号' if direction == 'bull' else '承压位，反弹至此易遇阻'}"),
@@ -451,7 +453,7 @@ def _structure_milestones(d: pd.DataFrame, pats) -> list[dict]:
                 tgt = e["key_levels"].get("measure_target") or e["key_levels"].get("measure_target_up")
                 out.append({"bar_idx": i, "time": _date_str(d, i), "price": float(nl),
                             "kind": "pattern", "label": f"{e['name']}·回踩颈线确认",
-                            "direction": "bull", "star": True,
+                            "direction": "bull", "star": False,
                             "detail": (f"突破后回踩颈线 {nl:.2f} 企稳（最低 {low[i]:.2f} 触及后收回），"
                                        f"{e['name']}突破有效性获二次确认"
                                        + (f"；上行量度目标 {float(tgt):.2f} 维持有效" if tgt else "")),
@@ -463,7 +465,7 @@ def _structure_milestones(d: pd.DataFrame, pats) -> list[dict]:
                 tgt = e["key_levels"].get("measure_target") or e["key_levels"].get("measure_target_dn")
                 out.append({"bar_idx": i, "time": _date_str(d, i), "price": float(nl),
                             "kind": "pattern", "label": f"{e['name']}·反抽颈线确认",
-                            "direction": "bear", "star": True,
+                            "direction": "bear", "star": False,
                             "detail": (f"跌破后反抽颈线 {nl:.2f} 受阻（最高 {high[i]:.2f} 触及后回落），"
                                        f"{e['name']}跌破有效性获二次确认"
                                        + (f"；下行量度目标 {float(tgt):.2f} 维持有效" if tgt else "")),
@@ -567,8 +569,9 @@ def _build_annotations(d: pd.DataFrame, pats, divs, fib, harms, ind_sigs) -> lis
             or lv.get("upper_now") or lv.get("lower") or lv.get("lower_now") \
             or lv.get("c_low") or lv.get("arc_low") or lv.get("flag_upper") \
             or lv.get("wave3_top") or close
-        star_pat = (bool(e["star"]) or (e["confirm_idx"] is not None
-                                        and e["kind"] in _MAJOR_PAT_KINDS)) \
+        # 星标口径：只有「已确认的结构突破/破位」才打星（构筑中不打星）；
+        # 时效上只留活跃结构或近期确认事件
+        star_pat = (e["confirm_idx"] is not None) \
             and (bool(e.get("active", True)) or int(bar) >= asof - STAR_RECENT_BARS)
         fwd = _pat_forward(e)
         a = {"bar_idx": int(bar), "time": _date_str(d, bar), "price": float(price),
@@ -619,7 +622,7 @@ def _build_annotations(d: pd.DataFrame, pats, divs, fib, harms, ind_sigs) -> lis
             "bar_idx": bar, "time": _date_str(d, bar), "price": anchor,
             "kind": "divergence", "label": label,
             "direction": "bear" if top else "bull",
-            "star": bool(e.get("star", False)),
+            "star": False,   # 星标只留给结构突破/破位与谐波反转；背离保留标注但不打星
             "detail": detail,
             "_score": 60 + 10 * e.get("_imp", 0),
             "lines": [{"t1": _date_str(d, e["idx1"]), "p1": float(e["price1"]),
@@ -910,11 +913,22 @@ def analyze(df: pd.DataFrame, timeframe: str = "1d") -> dict:
     if bear_pat is not None:
         blv = bear_pat["key_levels"]
         dn_t = blv.get("measure_target") or blv.get("measure_target_dn")
-        b_inv = blv.get("invalidation")
-        if dn_t is not None and dn_t < close:
-            bear_note = f"{bear_pat['name']}已确认跌破，下行量度目标 {dn_t:.2f}。"
-        if b_inv is not None and b_inv > close:
-            bear_note += f"若收盘收复 {b_inv:.2f}（{bear_pat['name']}失效点），空头结构破坏，方可重新评估多头。"
+        # 确认后的失效位用颈线（教科书：跌破后收盘站回颈线=假跌破，结构破坏），
+        # 而非构筑期的峰顶失效点（确认后引用峰顶=几乎不可达，结论失真）
+        nl_b = blv.get("neckline") or blv.get("neckline_at_end")
+        if nl_b is not None and close > nl_b:
+            # 现价已收复颈线：跌破失败（空头陷阱特征），量度目标作废
+            bear_note = (f"{bear_pat['name']}跌破后已收复颈线 {nl_b:.2f}，"
+                         f"属假跌破特征，其下行量度目标不再作为依据；"
+                         f"收盘重新跌破 {nl_b:.2f} 前不按空头结构推演。")
+            dn_t = None
+        else:
+            if dn_t is not None and dn_t < close:
+                bear_note = f"{bear_pat['name']}已确认跌破，下行量度目标 {dn_t:.2f}。"
+            b_inv = nl_b if nl_b is not None else blv.get("invalidation")
+            if b_inv is not None and b_inv > close:
+                bear_note += (f"若收盘收复 {b_inv:.2f}（{bear_pat['name']}颈线），"
+                              f"则跌破失败（假跌破），空头结构破坏，方可重新评估多头。")
 
     # 构筑中的多头反转结构（未确认）：给出确认触发位与失败位，构成双向情景
     bull_note = ""

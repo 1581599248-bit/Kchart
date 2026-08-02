@@ -47,7 +47,7 @@ RYAN技术面K线模型/
 数据源 = tushare 兼容 HTTP API（`backend/app/ts_api.py` 封装）：
 - 端点 `POST {TS_URL}`（默认 `https://ts.gyzcloud.top/api`，env `TS_URL` 覆盖），body `{"api_name","token","params","fields"}`；token 从环境变量 `TS_TOKEN` 读取，**禁止写进代码与任何 git 跟踪文件**。
 - 全局限流：线程锁 + 最小调用间隔 `TS_MIN_INTERVAL` 秒（默认 0.45s ≈ 133次/分，低于 150次/分上限）；网络错误/5xx 指数退避重试，`code!=0` 抛 `TsApiError`。
-- 磁盘缓存 `data/api_cache/`（JSON，git 忽略）：stock_basic/trade_cal 12 小时整包缓存；K 线类（daily/adj_factor/index_daily）按 ts_code 单文件存原始数据，空缓存全量拉取自 `KLINE_EARLIEST` 起（默认 2018-01-01，比展示窗口多留 2 年指标 warmup），缓存最大日期 < 最新交易日时增量拉取（start_date=最大日+1）合并去重写回。接口返回的 K线展示窗口由 `KLINE_DISPLAY_START`（默认 2020-01-01）下限裁剪（`_load_bars_df` start 缺省时套用），烘焙文件同样只含该日起数据。
+- 磁盘缓存 `data/api_cache/`（JSON，git 忽略）：stock_basic/trade_cal 12 小时整包缓存；K 线类（daily/adj_factor/index_daily）按 ts_code 单文件存原始数据，空缓存全量拉取自 `KLINE_EARLIEST` 起（默认 2020-01-01，指数/个股一致），缓存最大日期 < 最新交易日时增量拉取（start_date=最大日+1）合并去重写回。接口返回的 K线展示窗口由 `KLINE_DISPLAY_START`（默认 2020-01-01）下限裁剪（`_load_bars_df` start 缺省时套用），烘焙文件同样只含该日起数据。
 
 - 个股日线：API `daily`（原始价，vol=手，amount=千元）+ `adj_factor`；前复权在读时计算：**OHLC × adj_factor / max(adj_factor)**（max 取该股全历史最新因子），vol/amount 不动。
 - 指数日线：API `index_daily`（无复权概念，直接用）。
@@ -148,7 +148,7 @@ RYAN技术面K线模型/
   标在结构最后一个 pivot）、颈线/边界突破（confirm_idx）、突破后回踩颈线确认（bear 为反抽颈线确认，
   容差 1%，每形态只标首次）；现价到达斐波那契重要位（0.382/0.5/0.618/0.786 贴近 1.5% 或 golden pocket）
   与进入谐波 PRZ 时亦上图。
-- `star=True` 仅用于：已确认的主要结构突破、回踩/反抽颈线确认、已确认明显背离、进入谐波 PRZ、关键斐波那契位（golden pocket）企稳。密度控制：同一 10 根K线窗口内同密度组（_grp，缺省=kind；pattern 按 突破/里程碑/回踩×形态种类 分组）只保留最重要的一个。
+- `star=True` 仅用于：已确认的结构突破/破位（颈线/边界，构筑中不打星）、谐波反转（D点/进入 PRZ）；RSI 超买超卖、EMA 交叉、背离、回踩/反抽确认、斐波那契位一律不打星。密度控制：同一 10 根K线窗口内同密度组（_grp，缺省=kind；pattern 按 突破/里程碑/回踩×形态种类 分组；EMA 交叉为离散交替事件按事件唯一化不参与去重）只保留最重要的一个。顶部反转形态只在高位成立、底部反转形态只在低位成立（patterns.py `_position_ok`：极点在 250 根窗口区间分位 顶≥0.60/底≤0.40，叠加前置趋势校验）。
 - **多尺度自适应分析（2026-08-02 用户反馈定稿，取代一切固定窗口规则）**：系统必须自动识别波段级别，禁止"近N根/固定ATR倍数"式硬编码窗口：
   1. pivots 层构建多尺度 zigzag（如 min_pct=3%/8%/15% 三级，参数文件头可调），每个 swing 标注级别（幅度+持续K线数）；
   2. 主导周期判定：最近已确认 swing 腿所在级别为当前交易级别，其上一级为背景级别；

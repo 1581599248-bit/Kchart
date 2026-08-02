@@ -26,10 +26,10 @@
       const slot = this.board.el.querySelector('.analysis-slot');
       if (this.showSummary) slot.innerHTML = '<div class="analysis-card dim skeleton">推背图分析计算中…</div>';
       try {
-        // 分析窗口与已加载K线区间对齐：pan/zoom 到任何历史位置都有标注
-        const first = this.board.bars[0];
-        const start = first ? new Date(first.time * 1000).toISOString().slice(0, 10) : undefined;
-        this.data = await window.API.analysis(this.board.tsCode, this.board.timeframe, false, start);
+        // 分析窗口由后端缺省（展示下限 2020 起），与K线并行发出；K线就位后再画标注
+        const dataP = window.API.analysis(this.board.tsCode, this.board.timeframe, false);
+        if (this.board._barsReady) await this.board._barsReady;
+        this.data = await dataP;
         this.annotations = (this.data.annotations || []).map(a => this._normalize(a)).filter(a => a.time != null);
         this._barByTime = new Map(this.board.bars.map(b => [b.time, b]));
         this._applyMarkers();

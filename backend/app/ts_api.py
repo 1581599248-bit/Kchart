@@ -312,15 +312,24 @@ def load_daily_qfq(ts_code: str, start=None, end=None) -> pd.DataFrame:
 
     口径严格同原 db.py：OHLC × adj_factor / max(adj_factor)（max 取该股全历史
     最新因子），vol/amount 不动。
+
+    daily 与 adj_factor 两路并行拉取（per-key 锁各自独立，全局限流器仍生效），
+    冷标的首次加载省一次往返。
     """
-    daily = _cached_kline(
-        f"daily_{ts_code}", "daily", {"ts_code": ts_code},
-        fields="ts_code,trade_date,open,high,low,close,pre_close,pct_chg,vol,amount",
-    )
-    fac = _cached_kline(
-        f"adj_factor_{ts_code}", "adj_factor", {"ts_code": ts_code},
-        fields="ts_code,trade_date,adj_factor",
-    )
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_daily = ex.submit(
+            _cached_kline,
+            f"daily_{ts_code}", "daily", {"ts_code": ts_code},
+            "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,vol,amount",
+        )
+        f_fac = ex.submit(
+            _cached_kline,
+            f"adj_factor_{ts_code}", "adj_factor", {"ts_code": ts_code},
+            "ts_code,trade_date,adj_factor",
+        )
+        daily, fac = f_daily.result(), f_fac.result()
     cols = ["trade_date", "open", "high", "low", "close", "vol", "amount"]
     if daily.empty or fac.empty:
         return pd.DataFrame(columns=cols)
