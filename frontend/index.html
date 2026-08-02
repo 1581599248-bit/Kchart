@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RYAN K线推背图</title>
+<link rel="stylesheet" href="css/app.css?v=20260802d">
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">RYAN <span class="gold">K线推背图</span></div>
+  <nav id="main-nav">
+    <button class="nav-btn active" data-page="board">指数看板</button>
+    <button class="nav-btn" data-page="search">TOP20</button>
+  </nav>
+  <div id="meta-info" class="meta-info"></div>
+</header>
+
+<main>
+  <!-- 分页1：指数看板(上半，固定) + 搜索/个股看板+右侧栏(下半) -->
+  <section id="page-board" class="page active">
+    <div id="index-btn-row" class="index-btn-row"></div>
+    <div id="index-board-slot"></div>
+    <h2 class="section-title">全市场搜索</h2>
+    <div class="search-wrap">
+      <input id="search-input" type="text" placeholder="输入代码或名称搜索（如 600519 / 茅台）" autocomplete="off">
+      <div id="search-status" class="dim"></div>
+    </div>
+    <table id="search-table" class="data-table">
+      <thead><tr><th>代码</th><th>名称</th><th>市场</th><th>类型</th></tr></thead>
+      <tbody id="search-tbody"></tbody>
+    </table>
+    <div class="board-row" id="stock-row">
+      <div id="stock-board-slot" class="board-main">
+        <div id="stock-placeholder">在上方搜索并点击结果，或点击右侧自选股 / 搜索历史，在此加载个股 K 线推背图</div>
+      </div>
+      <aside id="side-panel">
+        <div class="sp-block">
+          <div class="sp-head">自选股 <button id="watch-add" class="mini-btn">☆ 加自选</button></div>
+          <div id="watch-list" class="sp-list"></div>
+        </div>
+        <div class="sp-block">
+          <div class="sp-head">搜索历史 <button id="history-clear" class="mini-btn">清空</button></div>
+          <div id="history-list" class="sp-list"></div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 分页2：技术面 TOP20 -->
+  <section id="page-search" class="page">
+    <h2 class="section-title">技术面 TOP20 <span id="top20-date" class="dim"></span>
+      <button id="top20-refresh" class="mini-btn">刷新</button></h2>
+    <div id="top20-grid" class="top20-grid"></div>
+  </section>
+
+  <!-- 单标的全尺寸看板（搜索/TOP20 进入） -->
+  <section id="page-detail" class="page">
+    <div class="detail-head">
+      <button id="detail-back" class="mini-btn">← 返回</button>
+      <span id="detail-title" class="detail-title"></span>
+    </div>
+    <div id="detail-board-slot"></div>
+  </section>
+</main>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="vendor/lightweight-charts.standalone.production.js"></script>
+<script src="js/api.js?v=20260802d"></script>
+<script src="js/mock.js?v=20260802d"></script>
+<script src="js/chart.js?v=20260802d"></script>
+<script src="js/drawing.js?v=20260802d"></script>
+<script src="js/analysis_view.js?v=20260802d"></script>
+<script src="js/app.js?v=20260802d"></script>
+</body>
+</html>

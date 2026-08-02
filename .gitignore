@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 结果库与缓存（系统记忆，不上传）
+data/*.duckdb
+data/*.duckdb.wal
+data/cache/
+
+# 日志
+logs/
+*.log
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 密钥（只允许环境变量，配置文件一律忽略）
+.env
+*.token
+secrets.json
+
+# 本地验收截图与 CDP 临时脚本（体量大/一次性，不上传）
+_shots/
+_cdp_*.py
+_chk*.json
