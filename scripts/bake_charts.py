@@ -17,6 +17,8 @@ import sys
 import time
 from pathlib import Path
 
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backend.app import config, ts_api  # noqa: E402
@@ -28,8 +30,9 @@ _OUT = config.DATA_DIR / "baked_charts.json"
 
 
 def _bake_index(ts_code: str) -> dict:
-    """单指数：2005 起全历史 1d bars + 推背图分析（与 /api/bars、/api/analysis 同口径）。"""
+    """单指数：KLINE_DISPLAY_START（2020）起 1d bars + 推背图分析（与 /api/bars、/api/analysis 同口径）。"""
     df = ts_api.load_index_daily(ts_code)
+    df = df[df["trade_date"] >= pd.Timestamp(config.KLINE_DISPLAY_START)].reset_index(drop=True)
     if df.empty or len(df) < 60:
         raise RuntimeError(f"数据不足（{len(df)} 行）")
     name = ts_api.get_security_name(ts_code) or config.BROAD_INDEX_NAMES.get(ts_code, ts_code)

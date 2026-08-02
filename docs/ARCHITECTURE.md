@@ -47,7 +47,7 @@ RYAN技术面K线模型/
 数据源 = tushare 兼容 HTTP API（`backend/app/ts_api.py` 封装）：
 - 端点 `POST {TS_URL}`（默认 `https://ts.gyzcloud.top/api`，env `TS_URL` 覆盖），body `{"api_name","token","params","fields"}`；token 从环境变量 `TS_TOKEN` 读取，**禁止写进代码与任何 git 跟踪文件**。
 - 全局限流：线程锁 + 最小调用间隔 `TS_MIN_INTERVAL` 秒（默认 0.45s ≈ 133次/分，低于 150次/分上限）；网络错误/5xx 指数退避重试，`code!=0` 抛 `TsApiError`。
-- 磁盘缓存 `data/api_cache/`（JSON，git 忽略）：stock_basic/trade_cal 12 小时整包缓存；K 线类（daily/adj_factor/index_daily）按 ts_code 单文件存原始数据，空缓存全量拉取自 `KLINE_EARLIEST` 起（默认 2005-01-01），缓存最大日期 < 最新交易日时增量拉取（start_date=最大日+1）合并去重写回。
+- 磁盘缓存 `data/api_cache/`（JSON，git 忽略）：stock_basic/trade_cal 12 小时整包缓存；K 线类（daily/adj_factor/index_daily）按 ts_code 单文件存原始数据，空缓存全量拉取自 `KLINE_EARLIEST` 起（默认 2018-01-01，比展示窗口多留 2 年指标 warmup），缓存最大日期 < 最新交易日时增量拉取（start_date=最大日+1）合并去重写回。接口返回的 K线展示窗口由 `KLINE_DISPLAY_START`（默认 2020-01-01）下限裁剪（`_load_bars_df` start 缺省时套用），烘焙文件同样只含该日起数据。
 
 - 个股日线：API `daily`（原始价，vol=手，amount=千元）+ `adj_factor`；前复权在读时计算：**OHLC × adj_factor / max(adj_factor)**（max 取该股全历史最新因子），vol/amount 不动。
 - 指数日线：API `index_daily`（无复权概念，直接用）。

@@ -205,9 +205,15 @@ def _warm_worker(symbols: list) -> None:
 # ---------------- 数据装载 ----------------
 
 def _load_bars_df(ts_code: str, timeframe: str, start, end) -> pd.DataFrame:
-    """按标的类型与时间粒度装载 bars DataFrame（含 trade_date + OHLCV，输出列名 ts）。"""
+    """按标的类型与时间粒度装载 bars DataFrame（含 trade_date + OHLCV，输出列名 ts）。
+
+    start 缺省时套用展示下限 KLINE_DISPLAY_START（2020 起，缩短加载）；
+    指标 warmup 由调用方显式传更早的 start，不受此限。
+    """
     if timeframe == "60m":
         raise HTTPException(400, "API 版暂无 60 分钟线")
+    if start is None:
+        start = config.KLINE_DISPLAY_START
     if timeframe == "1d":
         # 冷启动无本地 K线缓存时直出烘焙数据；后台追新写入 api_cache 后自动切回实时路径
         entry = _baked_charts().get(ts_code)
