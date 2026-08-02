@@ -3,7 +3,10 @@
 - 端点：POST {TS_URL}，body {"api_name", "token", "params", "fields"}，
   响应 {"code":0,"data":{"fields":[...],"items":[[...]]}}；code!=0 时抛 TsApiError。
 - token 从环境变量 TS_TOKEN 读取（禁止写进任何被 git 跟踪的文件）。
-- 全局限流：线程锁 + 最小调用间隔 TS_MIN_INTERVAL 秒（默认 0.45s ≈ 133次/分，低于 150次/分上限）。
+- 全局限流：线程锁 + 最小调用间隔 TS_MIN_INTERVAL 秒（默认 0.45s ≈ 133次/分，低于 150次/分上限）；
+  并发限制：信号量控制在飞请求数 ≤ TS_MAX_INFLIGHT（默认 2，上游对并发请求数有限制，
+  超限会返回「并发请求过多」——此类业务错误按瞬时错误自动退避重试）。
+- 同一缓存键（ts_code 等）的拉取有 per-key 锁：并发请求同一标的时只真正拉取一次。
 - 磁盘缓存 data/api_cache/（JSON）：
   * stock_basic / trade_cal：12 小时有效期整包重拉；
   * K 线类（daily / adj_factor / index_daily）：按 ts_code 单文件缓存原始数据，
@@ -34,6 +37,26 @@ _META_TTL = 12 * 3600
 _rate_lock = threading.Lock()
 _last_call = [0.0]
 
+# 并发限制：上游对在飞请求数有限制（超限返回「并发请求过多」），信号量控制在飞数
+_inflight = threading.Semaphore(config.TS_MAX_INFLIGHT)
+
+# 同一缓存键的拉取锁：并发的 bars/indicators/analysis 命中同一标的时只真正拉取一次
+_key_locks: dict[str, threading.Lock] = {}
+_key_locks_guard = threading.Lock()
+
+# 业务错误中的瞬时错误关键词（可重试）：并发/频率类限制
+_TRANSIENT_MARKERS = ("并发", "频繁", "过多", "上限", "超限", "限制", "频率", "limit", "rate")
+
+
+def _is_transient_msg(msg: str) -> bool:
+    m = (msg or "").lower()
+    return any(k in m for k in _TRANSIENT_MARKERS)
+
+
+def _lock_for(name: str) -> threading.Lock:
+    with _key_locks_guard:
+        return _key_locks.setdefault(name, threading.Lock())
+
 # list_securities 进程内缓存（10 分钟，对齐原 main._search_df 行为）
 _sec_cache = {"df": None, "loaded_at": 0.0}
 _SEC_TTL = 600
@@ -53,10 +76,11 @@ def _token() -> str:
 
 
 def call_api(api_name: str, params: dict | None = None, fields: str | None = None,
-             retries: int = 3) -> pd.DataFrame:
+             retries: int = 4) -> pd.DataFrame:
     """调用 API → DataFrame（列序 = 响应 fields）。
 
-    网络错误/5xx 指数退避重试 retries 次；code!=0 直接抛 TsApiError（不重试）。
+    网络错误/5xx 指数退避重试；code!=0 中含并发/频率类关键词的按瞬时错误
+    退避重试，其余业务错误（如 token 无效）直接抛 TsApiError 不重试。
     """
     body = {"api_name": api_name, "token": _token(), "params": params or {}}
     if fields:
@@ -69,21 +93,29 @@ def call_api(api_name: str, params: dict | None = None, fields: str | None = Non
                 time.sleep(wait)
             _last_call[0] = time.monotonic()
         try:
-            resp = requests.post(
-                config.TS_URL, json=body, timeout=60,
-                headers={"Accept-Encoding": "gzip"},
-            )
+            with _inflight:  # 控制在飞请求数，避免触发上游并发限制
+                resp = requests.post(
+                    config.TS_URL, json=body, timeout=60,
+                    headers={"Accept-Encoding": "gzip"},
+                )
             if resp.status_code >= 500:
                 raise requests.HTTPError(f"HTTP {resp.status_code}", response=resp)
             payload = resp.json()
         except (requests.RequestException, ValueError) as e:
             last_exc = e
-            time.sleep(2 ** attempt)  # 1s, 2s, 4s 指数退避
+            time.sleep(min(2 ** attempt, 8))  # 1s, 2s, 4s, 8s 指数退避
             continue
         if payload.get("code") != 0:
-            raise TsApiError(f"{api_name} 返回错误: {payload.get('msg')}")
+            msg = str(payload.get("msg"))
+            if _is_transient_msg(msg):
+                last_exc = TsApiError(f"{api_name} 返回错误: {msg}")
+                time.sleep(min(2 * (attempt + 1), 8))  # 2s, 4s, 6s, 8s 退避后重试
+                continue
+            raise TsApiError(f"{api_name} 返回错误: {msg}")
         data = payload.get("data") or {}
         return pd.DataFrame(data.get("items") or [], columns=data.get("fields") or [])
+    if isinstance(last_exc, TsApiError):
+        raise last_exc
     raise TsApiError(f"{api_name} 网络错误（重试 {retries} 次仍失败）: {last_exc}")
 
 
@@ -110,46 +142,48 @@ def _write_cache(name: str, obj: dict) -> None:
 
 
 def _cached_meta(name: str, api_name: str, params: dict, fields: str) -> pd.DataFrame:
-    """基础信息类：12 小时整包缓存。"""
-    c = _read_cache(name)
-    if c and time.time() - c.get("fetched_at", 0) < _META_TTL:
-        return pd.DataFrame(c["rows"])
-    df = call_api(api_name, params=params, fields=fields)
-    _write_cache(name, {"fetched_at": time.time(),
-                        "rows": df.to_dict(orient="records")})
-    return df
+    """基础信息类：12 小时整包缓存。per-key 锁防并发重复拉取。"""
+    with _lock_for(name):
+        c = _read_cache(name)
+        if c and time.time() - c.get("fetched_at", 0) < _META_TTL:
+            return pd.DataFrame(c["rows"])
+        df = call_api(api_name, params=params, fields=fields)
+        _write_cache(name, {"fetched_at": time.time(),
+                            "rows": df.to_dict(orient="records")})
+        return df
 
 
 def _cached_kline(name: str, api_name: str, key: str, fields: str) -> pd.DataFrame:
     """K 线类：单标的缓存原始数据，按最新交易日判定过期并增量拉取合并。
 
-    返回 DataFrame 含 trade_date（datetime64）且按日期升序。
+    返回 DataFrame 含 trade_date（datetime64）且按日期升序。per-key 锁防并发重复拉取。
     """
-    c = _read_cache(name) or {}
-    rows = c.get("rows") or []
-    df = pd.DataFrame(rows)
-    latest = latest_trade_date()
-    max_d = None
-    if not df.empty:
-        df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d")
-        max_d = df["trade_date"].max().date()
-    if max_d is None or max_d < latest:
-        # 增量：从缓存最大日+1 拉起；空缓存则全历史一次拉取
-        params = dict(key)
-        if max_d is not None:
-            params["start_date"] = (max_d + dt.timedelta(days=1)).strftime("%Y%m%d")
-        new = call_api(api_name, params=params, fields=fields)
-        if not new.empty:
-            new["trade_date"] = pd.to_datetime(new["trade_date"], format="%Y%m%d")
-            df = pd.concat([df, new], ignore_index=True)
-            df = df.drop_duplicates(subset=["trade_date"], keep="last")
-            df = df.sort_values("trade_date").reset_index(drop=True)
-            out = df.copy()
-            out["trade_date"] = out["trade_date"].dt.strftime("%Y%m%d")
-            _write_cache(name, {"rows": out.to_dict(orient="records")})
-        elif df.empty:
-            return df
-    return df.reset_index(drop=True)
+    with _lock_for(name):
+        c = _read_cache(name) or {}
+        rows = c.get("rows") or []
+        df = pd.DataFrame(rows)
+        latest = latest_trade_date()
+        max_d = None
+        if not df.empty:
+            df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d")
+            max_d = df["trade_date"].max().date()
+        if max_d is None or max_d < latest:
+            # 增量：从缓存最大日+1 拉起；空缓存则全历史一次拉取
+            params = dict(key)
+            if max_d is not None:
+                params["start_date"] = (max_d + dt.timedelta(days=1)).strftime("%Y%m%d")
+            new = call_api(api_name, params=params, fields=fields)
+            if not new.empty:
+                new["trade_date"] = pd.to_datetime(new["trade_date"], format="%Y%m%d")
+                df = pd.concat([df, new], ignore_index=True)
+                df = df.drop_duplicates(subset=["trade_date"], keep="last")
+                df = df.sort_values("trade_date").reset_index(drop=True)
+                out = df.copy()
+                out["trade_date"] = out["trade_date"].dt.strftime("%Y%m%d")
+                _write_cache(name, {"rows": out.to_dict(orient="records")})
+            elif df.empty:
+                return df
+        return df.reset_index(drop=True)
 
 
 # ---------------- 日历 ----------------
