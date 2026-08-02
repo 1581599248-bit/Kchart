@@ -31,7 +31,7 @@ from . import indicators
 from . import patterns as pat_mod
 from . import pivots as piv_mod
 
-ANALYSIS_VERSION = "analysis_v4.2"   # 分析算法版本：改动识别/标注/结论逻辑时递增，缓存键引用
+ANALYSIS_VERSION = "analysis_v4.3"   # 分析算法版本：改动识别/标注/结论逻辑时递增，缓存键引用
 
 DIV_STAR_AGE = 40         # 背离确认后多少根内仍给 star（已废弃，保留兼容）
 DENSITY_WINDOW = 10       # 密度控制窗口（根）
@@ -119,31 +119,31 @@ def _indicator_signals(d: pd.DataFrame) -> list[dict]:
 
 
 def _trend_cross_signals(d: pd.DataFrame) -> list[dict]:
-    """趋势切换层（全历史）：MA20×MA60 金叉/死叉=中期趋势方向确认，
+    """趋势切换层（全历史）：EMA20×EMA60 金叉/死叉=中期趋势方向确认，
     ADX≥25 给星标（趋势有强度）。文案给动态支撑/压力与失效条件。"""
     n = len(d)
     close = d["close"].to_numpy(dtype=float)
-    ma20, ma60 = d["MA20"].to_numpy(dtype=float), d["MA60"].to_numpy(dtype=float)
+    ema20, ema60 = d["EMA20"].to_numpy(dtype=float), d["EMA60"].to_numpy(dtype=float)
     adx = d["ADX"].to_numpy(dtype=float)
     ev: list[dict] = []
     for i in range(1, n):
-        if np.isnan(ma60[i]) or np.isnan(ma20[i - 1]):
+        if np.isnan(ema60[i]) or np.isnan(ema20[i - 1]):
             continue
-        golden = ma20[i - 1] <= ma60[i - 1] and ma20[i] > ma60[i]
-        death = ma20[i - 1] >= ma60[i - 1] and ma20[i] < ma60[i]
+        golden = ema20[i - 1] <= ema60[i - 1] and ema20[i] > ema60[i]
+        death = ema20[i - 1] >= ema60[i - 1] and ema20[i] < ema60[i]
         if not (golden or death):
             continue
         a = adx[i] if not np.isnan(adx[i]) else 0.0
         ev.append({"bar_idx": i, "time": _date_str(d, i), "price": float(close[i]),
                    "kind": "trend",
-                   "label": "MA20金叉MA60" if golden else "MA20死叉MA60",
+                   "label": "EMA20金叉EMA60" if golden else "EMA20死叉EMA60",
                    "direction": "bull" if golden else "bear",
                    "star": bool(a >= 25),
-                   "detail": (f"MA20({'%.2f' % ma20[i]}){'上穿' if golden else '下穿'}"
-                              f"MA60({'%.2f' % ma60[i]})，中期趋势{'转多' if golden else '转空'}"
+                   "detail": (f"EMA20({'%.2f' % ema20[i]}){'上穿' if golden else '下穿'}"
+                              f"EMA60({'%.2f' % ema60[i]})，中期趋势{'转多' if golden else '转空'}"
                               f"（ADX={a:.0f}）；"
-                              + (f"回调看 MA60 动态支撑，死叉则转多失败" if golden
-                                 else f"反弹看 MA60 动态压力，金叉则转空失败")),
+                              + (f"回调看 EMA60 动态支撑，死叉则转多失败" if golden
+                                 else f"反弹看 EMA60 动态压力，金叉则转空失败")),
                    "_score": 62, "_grp": "trend_cross"})
     return ev
 

@@ -21,7 +21,7 @@ def add_ma(df: pd.DataFrame, periods=(5, 10, 20, 60, 120, 250)) -> pd.DataFrame:
     return out
 
 
-def add_ema(df: pd.DataFrame, periods=(12, 26, 50)) -> pd.DataFrame:
+def add_ema(df: pd.DataFrame, periods=(12, 20, 26, 50, 60)) -> pd.DataFrame:
     out = df.copy()
     for p in periods:
         out[f"EMA{p}"] = out["close"].ewm(span=p, adjust=False).mean()
