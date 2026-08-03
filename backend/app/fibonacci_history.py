@@ -1,6 +1,6 @@
 """大结构斐波那契回撤提示。
 
-只基于15%级别ZigZag主波段计算，并同时要求波段持续时间和ATR振幅足够。
+只基于20%级别ZigZag主波段计算；波段至少持续60根日K且振幅至少8倍ATR。
 仅保留0.5与0.618两个回撤位置；主图只显示精确比例标签，不绘制横线、区域或折线。
 """
 from __future__ import annotations
@@ -11,15 +11,15 @@ import pandas as pd
 from . import pivots as piv_mod
 
 RATIOS = (0.5, 0.618)
-MAJOR_ZZ_PCT = 0.15
-MIN_SWING_PCT = 0.15
-MIN_SWING_ATR = 6.0
-MIN_SWING_BARS = 25
-MAX_TRACK_BARS = 120
+MAJOR_ZZ_PCT = 0.20
+MIN_SWING_PCT = 0.20
+MIN_SWING_ATR = 8.0
+MIN_SWING_BARS = 60
+MAX_TRACK_BARS = 180
 TOUCH_TOL = 0.004
-DEDUP_BARS = 20
+DEDUP_BARS = 30
 
-_RATIO_SCORE = {0.5: 58, 0.618: 64}
+_RATIO_SCORE = {0.5: 60, 0.618: 66}
 
 
 def _date(df: pd.DataFrame, idx: int) -> str:
@@ -44,7 +44,7 @@ def _touch_event(df: pd.DataFrame, idx: int, ratio: float, level: float,
         "lines": [],
         "zones": [],
         "polylines": [],
-        "active": idx >= len(df) - 100,
+        "active": idx >= len(df) - 140,
         "_score": _RATIO_SCORE.get(ratio, 50),
         "_grp": f"fib:{swing_start}:{swing_end}:{ratio}",
         "_amp": round(float(amplitude), 4),
@@ -52,7 +52,7 @@ def _touch_event(df: pd.DataFrame, idx: int, ratio: float, level: float,
 
 
 def find_fibonacci_touches(df: pd.DataFrame, pivots: pd.DataFrame) -> list[dict]:
-    del pivots  # 统一使用大结构15% ZigZag，避免小pivot生成伪Fib。
+    del pivots  # 统一使用20%大结构ZigZag，避免中小波段生成伪Fib。
     zz = piv_mod.zigzag(df, min_pct=MAJOR_ZZ_PCT).reset_index(drop=True)
     if len(zz) < 2:
         return []
