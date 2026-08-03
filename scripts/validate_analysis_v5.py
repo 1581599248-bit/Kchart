@@ -1,6 +1,13 @@
 """推背图v5离线验收：不依赖行情API。"""
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import numpy as np
 import pandas as pd
 
@@ -36,11 +43,9 @@ def validate_signal_causality() -> None:
 
 def validate_rsi_thresholds() -> None:
     df = indicators.compute_all(market_frame(140))
-    # 人工构造三个越界：79→81应触发，21→19应触发；70/30不应触发。
     df["RSI6"] = 50.0
     df.loc[39, "RSI6"], df.loc[40, "RSI6"] = 79.0, 81.0
     df.loc[79, "RSI6"], df.loc[80, "RSI6"] = 21.0, 19.0
-    # 保证位置过滤通过，且不处于强趋势过滤状态。
     df.loc[40, "close"] = df.loc[:40, "high"].max()
     df.loc[80, "close"] = df.loc[:80, "low"].min()
     df["ADX"] = 15.0
@@ -69,7 +74,7 @@ def validate_fibonacci_confirmation() -> None:
     close = np.full(n, 100.0)
     close[:11] = np.linspace(110, 100, 11)
     close[10:31] = np.linspace(100, 140, 21)
-    close[31:46] = np.linspace(140, 115.3, 15)  # 接近0.618回撤位115.28
+    close[31:46] = np.linspace(140, 115.3, 15)
     close[46:] = 118
     df = pd.DataFrame({
         "trade_date": pd.date_range("2024-01-01", periods=n, freq="B"),
