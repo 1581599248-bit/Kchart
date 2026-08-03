@@ -1,7 +1,7 @@
 """Kchart 高速入口。
 
 在旧接口保持兼容的前提下新增 /api/chart：一次返回 K线、指标和推背图。
-热缓存直接返回已经编码好的 JSON 字节，避免每次请求重复序列化大对象。
+完成构建的 bundle 直接返回已经编码好的 JSON 字节，避免重复序列化。
 """
 from __future__ import annotations
 
@@ -50,12 +50,13 @@ def _serve_chart(ts_code: str, timeframe: str, refresh: int):
         "X-Chart-Cache": state,
     }
 
-    # 新鲜热缓存的主体完全不变，直接返回保存时生成的JSON，省掉FastAPI编码与JSON序列化。
-    if cache_hit and not refreshing:
+    # 正常完成的 bundle 无需动态改写主体；首次构建和热命中都直接返回缓存字节。
+    if not refreshing:
         raw = chart_cache.get_raw(ts_code, timeframe)
         if raw is not None:
             return Response(content=raw, media_type="application/json", headers=headers)
 
+    # 只有 stale-while-revalidate 需要在响应体里临时标记 refreshing=true。
     return ORJSONResponse(content=result, headers=headers)
 
 
