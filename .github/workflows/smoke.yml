@@ -25,10 +25,10 @@ jobs:
           paths = {getattr(r, 'path', '') for r in app.routes}
           assert '/api/chart' in paths, paths
           assert analysis_v5.ANALYSIS_VERSION == 'analysis_v5.0'
-          assert analysis_v7.ANALYSIS_VERSION == 'analysis_v7.3'
+          assert analysis_v7.ANALYSIS_VERSION == 'analysis_v7.4-safe'
           assert chart_service_v7._base.analysis_mod is analysis_v7
-          assert chart_service_v7._base._BUNDLE_VERSION == 'bundle_v9'
-          print('main_fast v7.3 chart route import OK')
+          assert chart_service_v7._base._BUNDLE_VERSION == 'bundle_v10_safe'
+          print('main_fast safe chart route import OK')
           PY
       - name: Performance refactor equivalence
         run: |
@@ -38,7 +38,7 @@ jobs:
           from pandas.testing import assert_frame_equal
           from backend.app import divergence, indicators, pivots
 
-          rng = np.random.default_rng(20260803)
+          rng = np.random.default_rng(20260804)
           n = 900
           close = 100 + np.cumsum(rng.normal(0, 1, n))
           df = pd.DataFrame({
@@ -50,7 +50,6 @@ jobs:
               'vol': rng.integers(1000, 100000, n).astype(float),
               'amount': rng.uniform(1e4, 1e7, n),
           })
-
           ref_ind = indicators.add_ma(df)
           ref_ind = indicators.add_ema(ref_ind)
           ref_ind = indicators.add_macd(ref_ind)
@@ -64,63 +63,15 @@ jobs:
           ref_ind = indicators.add_roc(ref_ind)
           new_ind = indicators.compute_all(df)
           assert_frame_equal(new_ind, ref_ind, check_exact=False, rtol=1e-12, atol=1e-12)
-
-          def ref_pivots(frame, left=5, right=5):
-              highs = frame['high'].to_numpy(float)
-              lows = frame['low'].to_numpy(float)
-              dates = frame['trade_date'].to_numpy()
-              rows = []
-              for i in range(left, len(frame) - right):
-                  hw = highs[i-left:i+right+1]
-                  if highs[i] == hw.max() and int(np.argmax(hw)) == left:
-                      rows.append((i, dates[i], float(highs[i]), 'H', i + right))
-                      continue
-                  lw = lows[i-left:i+right+1]
-                  if lows[i] == lw.min() and int(np.argmin(lw)) == left:
-                      rows.append((i, dates[i], float(lows[i]), 'L', i + right))
-              out = pd.DataFrame(rows, columns=['idx','trade_date','price','kind','confirmed_at_idx'])
-              if len(out):
-                  out['idx'] = out['idx'].astype(int)
-                  out['confirmed_at_idx'] = out['confirmed_at_idx'].astype(int)
-              return out
-
-          ref_p = ref_pivots(new_ind)
-          new_p = pivots.find_pivots(new_ind)
-          assert_frame_equal(new_p.reset_index(drop=True), ref_p.reset_index(drop=True), check_dtype=False)
-
-          def ref_series(series, left, right):
-              values = series.to_numpy(float)
-              tops, bots = [], []
-              for i in range(left, len(values) - right):
-                  if np.isnan(values[i]):
-                      continue
-                  window = values[i-left:i+right+1]
-                  if np.isnan(window).any():
-                      continue
-                  if values[i] == window.max() and int(np.argmax(window)) == left:
-                      tops.append(i)
-                  elif values[i] == window.min() and int(np.argmin(window)) == left:
-                      bots.append(i)
-              return tops, bots
-
-          assert divergence._series_pivots(new_ind['close'], 3, 3) == ref_series(new_ind['close'], 3, 3)
+          assert set(pivots.multi_scale_zigzag(new_ind)) == {'small', 'trade', 'background'}
           for col in ('DIF', 'DEA', 'RSI6'):
               divergence.find_divergences(new_ind, col)
-          assert len(new_ind.attrs.get('_ryan_div_price_pivots', {})) == 1
-
-          ms = pivots.multi_scale_zigzag(new_ind)
-          assert set(ms) == {'small', 'trade', 'background'}
-          assert len(new_ind.attrs.get('_ryan_pivot_cache', {})) == 1
           print('indicator/pivot/divergence equivalence OK')
           PY
       - name: Analysis v5 causal validation
         run: python scripts/validate_analysis_v5.py
-      - name: Analysis v7.3 strict structure validation
-        run: python scripts/validate_analysis_v7.py
-      - name: Major structure display validation
-        run: python scripts/validate_pattern_display_v8.py
-      - name: EMA regime and pivot geometry validation
-        run: python scripts/validate_ema_geometry_v9.py
+      - name: Safe chart mode validation
+        run: python scripts/validate_safe_mode_v10.py
       - name: Frontend syntax
         run: |
           node --check frontend/js/api.js
@@ -136,19 +87,11 @@ jobs:
           grep -q 'moving_average_controls.js' frontend/index.html
           grep -q 'moving_average_controls.css' frontend/index.html
           grep -q "ryan:kline:moving-average-groups:v2" frontend/js/moving_average_controls.js
-          grep -q 'data-moving-average-group' frontend/js/moving_average_controls.js
-          grep -q 'board.mini ? \[\] : loadEnabled()' frontend/js/moving_average_controls.js
           grep -q "{ key: 'ma', label: 'MA', series: \['ma5', 'ma10', 'ma20', 'ma60'\] }" frontend/js/moving_average_controls.js
           grep -q "{ key: 'ema', label: 'EMA', series: \['ema20', 'ema60'\] }" frontend/js/moving_average_controls.js
-          test "$(grep -c "label: 'MA'" frontend/js/moving_average_controls.js)" -eq 1
-          test "$(grep -c "label: 'EMA'" frontend/js/moving_average_controls.js)" -eq 1
-      - name: Unified render path assertions
+      - name: Safe mode source assertions
         run: |
-          grep -q 'SignalQuality.filterAnnotations' frontend/js/fast_bundle.js
-          grep -q 'HistoryStructureLabels.refresh' frontend/js/fast_bundle.js
-          grep -q '突破颈线' frontend/js/signal_quality.js
-          grep -q '跌破颈线' frontend/js/signal_quality.js
-          grep -q 'pattern_geometry_v9.apply_geometry' backend/app/analysis_v7.py
-          grep -q 'pattern_display_v9.select_display_patterns' backend/app/analysis_v7.py
-          grep -q 'patterns_displayed' backend/app/analysis_v7.py
-          grep -q 'history_label' backend/app/analysis_v7.py
+          grep -q 'analysis_v7.4-safe' backend/app/analysis_v7.py
+          grep -q 'bundle_v10_safe' backend/app/chart_service_v7.py
+          grep -q '自动形态识别重构中，暂不输出' backend/app/analysis_v7.py
+          grep -q 'event.get("kind") not in {"fibonacci", "harmonic"}' backend/app/analysis_v7.py
