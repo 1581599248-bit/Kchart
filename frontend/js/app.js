@@ -48,7 +48,6 @@
       btn.className = 'idx-btn';
       btn.textContent = idx.name;
       btn.title = idx.ts_code;
-      btn.addEventListener('mouseenter', () => window.API.prefetchChart && window.API.prefetchChart(idx.ts_code, '1d'));
       btn.addEventListener('click', () => selectIndex(idx, btn));
       row.appendChild(btn);
       if (i === 0) selectIndex(idx, btn);
@@ -111,8 +110,6 @@
       div.className = 'sp-item' + (x.ts_code === cur ? ' active' : '');
       div.innerHTML = `<span class="nm">${x.name}</span><span class="code">${x.ts_code}</span>` +
         (removable ? '<span class="rm" title="移出自选">×</span>' : '');
-      div.addEventListener('mouseenter', () => window.API.prefetchChart && window.API.prefetchChart(x.ts_code, '1d'));
-      div.addEventListener('touchstart', () => window.API.prefetchChart && window.API.prefetchChart(x.ts_code, '1d'), { passive: true });
       div.addEventListener('click', e => {
         if (e.target.classList.contains('rm')) {
           writeLs(LS_WATCH, readLs(LS_WATCH).filter(y => y.ts_code !== x.ts_code));
@@ -153,19 +150,12 @@
       list.forEach(r => {
         const tr = document.createElement('tr');
         tr.innerHTML = `<td>${r.ts_code}</td><td>${r.name}</td><td>${r.market || '—'}</td><td>${r.kind === 'index' ? '指数' : '个股'}</td>`;
-        tr.addEventListener('mouseenter', () => window.API.prefetchChart && window.API.prefetchChart(r.ts_code, '1d'));
-        tr.addEventListener('touchstart', () => window.API.prefetchChart && window.API.prefetchChart(r.ts_code, '1d'), { passive: true });
         tr.addEventListener('click', () => {
           addHistory({ ts_code: r.ts_code, name: r.name });
           loadStockBoard(r.ts_code, r.name);
         });
         tbody.appendChild(tr);
       });
-
-      // 输入完整代码或完整名称时，在用户点击前就开始生成图表缓存。
-      const ql = q.toLowerCase();
-      const exact = list.find(r => r.ts_code.toLowerCase() === ql || r.name.toLowerCase() === ql);
-      if (exact && window.API.prefetchChart) window.API.prefetchChart(exact.ts_code, '1d');
     } catch (e) {
       status.textContent = '';
       window.API.toast('搜索失败：' + e.message, true);
