@@ -25,10 +25,10 @@ jobs:
           paths = {getattr(r, 'path', '') for r in app.routes}
           assert '/api/chart' in paths, paths
           assert analysis_v5.ANALYSIS_VERSION == 'analysis_v5.0'
-          assert analysis_v7.ANALYSIS_VERSION == 'analysis_v7.2'
+          assert analysis_v7.ANALYSIS_VERSION == 'analysis_v7.3'
           assert chart_service_v7._base.analysis_mod is analysis_v7
-          assert chart_service_v7._base._BUNDLE_VERSION == 'bundle_v8'
-          print('main_fast v7.2 chart route import OK')
+          assert chart_service_v7._base._BUNDLE_VERSION == 'bundle_v9'
+          print('main_fast v7.3 chart route import OK')
           PY
       - name: Performance refactor equivalence
         run: |
@@ -115,10 +115,12 @@ jobs:
           PY
       - name: Analysis v5 causal validation
         run: python scripts/validate_analysis_v5.py
-      - name: Analysis v7.2 strict structure validation
+      - name: Analysis v7.3 strict structure validation
         run: python scripts/validate_analysis_v7.py
       - name: Major structure display validation
         run: python scripts/validate_pattern_display_v8.py
+      - name: EMA regime and pivot geometry validation
+        run: python scripts/validate_ema_geometry_v9.py
       - name: Frontend syntax
         run: |
           node --check frontend/js/api.js
@@ -146,6 +148,7 @@ jobs:
           grep -q 'HistoryStructureLabels.refresh' frontend/js/fast_bundle.js
           grep -q '突破颈线' frontend/js/signal_quality.js
           grep -q '跌破颈线' frontend/js/signal_quality.js
-          grep -q 'select_display_patterns' backend/app/analysis_v7.py
+          grep -q 'pattern_geometry_v9.apply_geometry' backend/app/analysis_v7.py
+          grep -q 'pattern_display_v9.select_display_patterns' backend/app/analysis_v7.py
           grep -q 'patterns_displayed' backend/app/analysis_v7.py
           grep -q 'history_label' backend/app/analysis_v7.py
