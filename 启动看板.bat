@@ -10,18 +10,18 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 if "%TS_TOKEN%"=="" (
-    echo [警告] 未设置环境变量 TS_TOKEN：行情数据将无法加载（TOP20 榜单仍可查看）
+    echo [警告] 未设置环境变量 TS_TOKEN：个股搜索和盘后更新将无法加载行情
     echo         设置方法：setx TS_TOKEN 你的token  ，然后重开本窗口
     echo.
 )
 
 echo ============================================
-echo   RYAN K线推背图 ^| 技术面多因子打分系统
+echo   RYAN K线推背图 ^| 高速缓存模式
 echo   正在启动后端服务（127.0.0.1:8600）...
-echo   数据来自 API 实时拉取，首次打开某标的会稍慢
+echo   K线、指标、推背图使用统一接口与两级缓存
 echo ============================================
 
 start "" /min cmd /c "timeout /t 4 /nobreak >nul && start http://127.0.0.1:8600"
-".venv\Scripts\python.exe" -m backend.app.main
+".venv\Scripts\python.exe" -m backend.app.main_fast
 
 pause
