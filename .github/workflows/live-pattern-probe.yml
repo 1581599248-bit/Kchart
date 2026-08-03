@@ -6,6 +6,7 @@ on:
       - 'backend/app/**'
       - 'scripts/live_pattern_probe_v11.py'
       - 'scripts/live_reversal_probe_v11.py'
+      - 'scripts/live_reversal_probe_v12.py'
       - '.github/workflows/live-pattern-probe.yml'
 
 jobs:
@@ -21,5 +22,5 @@ jobs:
       - run: pip install -r backend/requirements.txt
       - name: Audit legacy candidates on real Shanghai bars
         run: python scripts/live_pattern_probe_v11.py
-      - name: Validate conservative v11 reversal engine
-        run: python scripts/live_reversal_probe_v11.py
+      - name: Validate hard-rule v12 reversal engine
+        run: python scripts/live_reversal_probe_v12.py
