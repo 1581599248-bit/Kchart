@@ -1,14 +1,13 @@
-# Render 蓝图：RYAN K线推背图（API 数据模式）
-# 数据：运行时从 tushare 兼容 API（TS_URL）实时拉取并磁盘缓存；
-#       TOP20 榜单为离线烘焙静态文件 data/baked_top20.json（scripts/bake_top20.py 生成，随仓库提交）。
-# 部署时 Render 会提示填写 TS_TOKEN（sync:false，密钥不进仓库）。
+# Render 蓝图：RYAN K线推背图（高速缓存模式）
+# Web 服务常驻，用户请求走 /api/chart 统一接口。
+# 每日上海时间 15:20 自动刷新宽基指数与曾被搜索过的股票缓存。
 services:
   - type: web
     name: kchart
     runtime: python
-    plan: free
+    plan: starter
     buildCommand: pip install -r backend/requirements.txt
-    startCommand: python -m backend.app.main
+    startCommand: python -m backend.app.main_fast
     healthCheckPath: /api/meta
     envVars:
       - key: PYTHON_VERSION
