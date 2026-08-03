@@ -82,13 +82,13 @@ def _indicator_payload(computed: pd.DataFrame) -> dict:
     return out
 
 
-def build(code: str, timeframe: str = "1d") -> dict:
+def build(code: str, timeframe: str = "1d", force: bool = False) -> dict:
     """同步生成完整 bundle；同标的并发请求只计算一次。"""
     code = code.upper().strip()
     lock = _lock_for(code, timeframe)
     with lock:
         cached = chart_cache.get(code, timeframe)
-        if cached is not None and not _cache_stale(cached):
+        if not force and cached is not None and not _cache_stale(cached):
             return cached
 
         df = legacy._load_bars_df(code, timeframe, None, None)
@@ -130,8 +130,7 @@ def build(code: str, timeframe: str = "1d") -> dict:
 def _refresh_job(code: str, timeframe: str) -> None:
     key = chart_cache.make_key(code, timeframe)
     try:
-        chart_cache.clear(code, timeframe)
-        build(code, timeframe)
+        build(code, timeframe, force=True)
         log.info("chart bundle 已刷新: %s %s", code, timeframe)
     except Exception:
         log.exception("chart bundle 刷新失败: %s %s", code, timeframe)
@@ -154,8 +153,7 @@ def get(code: str, timeframe: str = "1d", refresh: bool = False) -> dict:
     code = code.upper().strip()
     cached = chart_cache.get(code, timeframe)
     if refresh:
-        chart_cache.clear(code, timeframe)
-        result = dict(build(code, timeframe))
+        result = dict(build(code, timeframe, force=True))
         result["meta"] = {"cache_hit": False, "refreshing": False}
         return result
 
@@ -175,7 +173,6 @@ def get(code: str, timeframe: str = "1d", refresh: bool = False) -> dict:
 def refresh_many(codes: list[str], timeframe: str = "1d") -> None:
     for code in dict.fromkeys(codes):
         try:
-            chart_cache.clear(code, timeframe)
-            build(code, timeframe)
+            build(code, timeframe, force=True)
         except Exception:
             log.exception("盘后批量刷新失败（跳过）: %s", code)
