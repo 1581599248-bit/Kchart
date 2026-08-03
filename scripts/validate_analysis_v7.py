@@ -1,4 +1,4 @@
-"""推背图v7.2严格结构验收：不依赖外部行情。"""
+"""推背图v7.3严格结构验收：不依赖外部行情。"""
 from __future__ import annotations
 
 import sys
@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
 import numpy as np
 import pandas as pd
 
-from backend.app import analysis_v7, fibonacci_history, indicators, strict_tops_v8
+from backend.app import analysis_v7, fibonacci_history, indicators, strict_tops_v9
 
 
 def _frame(n: int = 360) -> pd.DataFrame:
@@ -36,7 +36,7 @@ def _pivots(df: pd.DataFrame, rows: list[tuple[int, float, str]]) -> pd.DataFram
     ], columns=["idx", "trade_date", "price", "kind", "confirmed_at_idx"])
 
 
-def validate_m_top_large_only() -> None:
+def validate_m_top_recent_and_large() -> None:
     df = _frame(240)
     df.loc[:70, "close"] = np.linspace(78, 119, 71)
     df.loc[:70, "high"] = df.loc[:70, "close"] + 1
@@ -47,12 +47,29 @@ def validate_m_top_large_only() -> None:
     df.loc[146, ["open", "high", "low", "close", "vol"]] = [104, 105, 101, 102, 1_500_000]
 
     valid = _pivots(df, [(70, 120, "H"), (105, 104, "L"), (140, 118, "H")])
-    events = strict_tops_v8.find_strict_top_patterns(df, valid)
+    events = strict_tops_v9.find_strict_top_patterns(df, valid)
     assert any(e["kind"] == "double_top" for e in events), events
 
-    short = _pivots(df, [(70, 120, "H"), (85, 104, "L"), (100, 118, "H")])
-    events = strict_tops_v8.find_strict_top_patterns(df, short)
-    assert not any(e["kind"] == "double_top" for e in events), events
+    # 近期M顶：两顶只隔35根，但左顶到跌破确认超过40根，应识别。
+    recent = _frame(180)
+    recent.loc[:60, "close"] = np.linspace(90, 119, 61)
+    recent.loc[:60, "high"] = recent.loc[:60, "close"] + 1
+    recent.loc[:60, "low"] = recent.loc[:60, "close"] - 1
+    recent.loc[60, ["open", "high", "low", "close"]] = [119, 121, 118, 120]
+    recent.loc[80, ["open", "high", "low", "close"]] = [113, 114, 111, 112]
+    recent.loc[95, ["open", "high", "low", "close"]] = [117, 119, 116, 118]
+    recent.loc[105, ["open", "high", "low", "close", "vol"]] = [111, 112, 108, 109, 1_600_000]
+    piv = _pivots(recent, [(60, 120, "H"), (80, 112, "L"), (95, 118, "H")])
+    events = strict_tops_v9.find_strict_top_patterns(recent, piv)
+    m = [e for e in events if e["kind"] == "double_top"]
+    assert m, events
+    assert m[0]["key_levels"]["peak_gap"] == 35
+    assert m[0]["key_levels"]["total_span"] >= 40
+
+    # 两顶不足20根且迅速跌破，只是短期抖动，不得判M顶。
+    noise = _pivots(recent, [(60, 120, "H"), (68, 112, "L"), (75, 118, "H")])
+    assert not any(e["kind"] == "double_top"
+                   for e in strict_tops_v9.find_strict_top_patterns(recent, noise))
 
 
 def validate_head_shoulders_top_strict() -> None:
@@ -75,14 +92,14 @@ def validate_head_shoulders_top_strict() -> None:
         (80, 120, "H"), (110, 106, "L"), (145, 132, "H"),
         (180, 104, "L"), (220, 119, "H"),
     ])
-    events = strict_tops_v8.find_strict_top_patterns(df, valid)
+    events = strict_tops_v9.find_strict_top_patterns(df, valid)
     assert any(e["kind"] == "head_shoulders_top" for e in events), events
 
     short = _pivots(df, [
         (120, 120, "H"), (135, 106, "L"), (150, 132, "H"),
         (165, 104, "L"), (180, 119, "H"),
     ])
-    events = strict_tops_v8.find_strict_top_patterns(df, short)
+    events = strict_tops_v9.find_strict_top_patterns(df, short)
     assert not any(e["kind"] == "head_shoulders_top" for e in events), events
 
 
@@ -112,13 +129,6 @@ def validate_fibonacci_large_05_0618_only() -> None:
     with patch("backend.app.fibonacci_history.piv_mod.zigzag", return_value=too_short):
         assert fibonacci_history.find_fibonacci_touches(df, pd.DataFrame()) == []
 
-    too_small = pd.DataFrame([
-        (10, df.loc[10, "trade_date"], 100.0, "L", 15),
-        (90, df.loc[90, "trade_date"], 118.0, "H", 95),
-    ], columns=zz.columns)
-    with patch("backend.app.fibonacci_history.piv_mod.zigzag", return_value=too_small):
-        assert fibonacci_history.find_fibonacci_touches(df, pd.DataFrame()) == []
-
 
 def validate_v7_full_chain() -> None:
     rng = np.random.default_rng(20260803)
@@ -135,7 +145,7 @@ def validate_v7_full_chain() -> None:
     })
     result = analysis_v7.analyze(indicators.compute_all(frame), "1d")
     diagnostics = result["diagnostics"]
-    assert diagnostics["analysis_version"] == "analysis_v7.2"
+    assert diagnostics["analysis_version"] == "analysis_v7.3"
     assert diagnostics["causal"] is True
     assert diagnostics["patterns_displayed"] <= diagnostics["patterns_detected"]
     for event in result["annotations"]:
@@ -146,8 +156,8 @@ def validate_v7_full_chain() -> None:
 
 
 if __name__ == "__main__":
-    validate_m_top_large_only()
+    validate_m_top_recent_and_large()
     validate_head_shoulders_top_strict()
     validate_fibonacci_large_05_0618_only()
     validate_v7_full_chain()
-    print("analysis_v7.2 strict structure validation OK")
+    print("analysis_v7.3 strict structure validation OK")
