@@ -5,6 +5,7 @@ on:
     paths:
       - 'backend/app/**'
       - 'scripts/live_pattern_probe_v11.py'
+      - 'scripts/live_reversal_probe_v11.py'
       - '.github/workflows/live-pattern-probe.yml'
 
 jobs:
@@ -18,5 +19,7 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: pip install -r backend/requirements.txt
-      - name: Probe real Shanghai Composite bars
+      - name: Audit legacy candidates on real Shanghai bars
         run: python scripts/live_pattern_probe_v11.py
+      - name: Validate conservative v11 reversal engine
+        run: python scripts/live_reversal_probe_v11.py
