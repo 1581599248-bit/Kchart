@@ -5,14 +5,14 @@ on:
     paths:
       - 'backend/app/**'
       - 'scripts/live_pattern_probe_v11.py'
-      - 'scripts/live_reversal_debug_v13.py'
       - 'scripts/live_reversal_probe_v14.py'
+      - 'scripts/live_reversal_probe_v15.py'
       - '.github/workflows/live-pattern-probe.yml'
 
 jobs:
   shanghai-probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,7 +22,7 @@ jobs:
       - run: pip install -r backend/requirements.txt
       - name: Audit legacy candidates on real Shanghai bars
         run: python scripts/live_pattern_probe_v11.py
-      - name: Trace v13 hard-rule candidates
-        run: python scripts/live_reversal_debug_v13.py
       - name: Validate strict-confirm v14 reversal engine
         run: python scripts/live_reversal_probe_v14.py
+      - name: Run causal multi-index v15 audit
+        run: python scripts/live_reversal_probe_v15.py
