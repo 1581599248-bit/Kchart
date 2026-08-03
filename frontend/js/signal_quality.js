@@ -3,7 +3,7 @@
   'use strict';
 
   const AV = window.AnalysisView;
-  if (!AV || AV.prototype.__qualityGateInstalled) return;
+  if (!AV) return;
 
   const CONFIRMED_PATTERN_LABELS = new Set([
     '突破颈线', '跌破颈线', '向上突破', '向下跌破',
@@ -35,12 +35,9 @@
   }
 
   function shouldKeepBasic(a, lastBarIdx, idx) {
-    // 历史形态描摹和形态名强制保留。
     if (a.trace_only || a.history_label) return true;
     if (a.kind === 'pattern') {
-      // 已确认突破/跌破及失效动作强制保留。
       if (a.star || isPatternConfirmation(a)) return true;
-      // 未确认的构筑形态不上主图。
       return false;
     }
     if (a.active === false && idx < lastBarIdx - 160) return false;
@@ -67,7 +64,6 @@
       const prio = labelPriority(a);
       const label = String(a.label || '');
 
-      // 历史形态名与确认动作属于结构档案，不参与信号去重。
       if (a.trace_only || a.history_label || isPatternConfirmation(a)) {
         kept.push({ a, idx, prio });
         continue;
@@ -98,7 +94,6 @@
         continue;
       }
 
-      // 只有指标、趋势、背离等交易信号参与同方向互斥；结构事件不参与。
       const directional = kept.filter(k =>
         !k.a.trace_only
         && !k.a.history_label
@@ -127,15 +122,22 @@
     return kept.sort((x, y) => x.idx - y.idx).map(x => x.a);
   }
 
-  const originalLoad = AV.prototype.load;
-  AV.prototype.load = async function () {
-    await originalLoad.call(this);
-    const filtered = filterAnnotations(this, this.annotations || []);
-    if (filtered.length === (this.annotations || []).length) return;
-    this.annotations = filtered;
-    this._applyMarkers();
-    this._requestRedraw();
-  };
+  function apply(view) {
+    const current = view.annotations || [];
+    view.annotations = filterAnnotations(view, current);
+    view._applyMarkers();
+    view._requestRedraw();
+    return view.annotations;
+  }
 
-  AV.prototype.__qualityGateInstalled = true;
+  window.SignalQuality = { filterAnnotations, apply, isPatternConfirmation };
+
+  if (!AV.prototype.__qualityGateInstalled) {
+    const originalLoad = AV.prototype.load;
+    AV.prototype.load = async function () {
+      await originalLoad.call(this);
+      apply(this);
+    };
+    AV.prototype.__qualityGateInstalled = true;
+  }
 })();
