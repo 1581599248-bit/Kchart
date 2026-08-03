@@ -1,7 +1,7 @@
-"""大级别斐波那契位置提示。
+"""大结构斐波那契回撤提示。
 
-只基于15%级别ZigZag主要波段计算；价格触达重要回撤位并出现支撑/压力反应时，
-主图仅显示精确比例标签（0.382/0.5/0.618/0.786），不绘制横线、区域或折线。
+只基于15%级别ZigZag主波段计算，并同时要求波段持续时间和ATR振幅足够。
+仅保留0.5与0.618两个回撤位置；主图只显示精确比例标签，不绘制横线、区域或折线。
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pandas as pd
 
 from . import pivots as piv_mod
 
-RATIOS = (0.382, 0.5, 0.618, 0.786)
+RATIOS = (0.5, 0.618)
 MAJOR_ZZ_PCT = 0.15
 MIN_SWING_PCT = 0.15
 MIN_SWING_ATR = 6.0
@@ -19,7 +19,7 @@ MAX_TRACK_BARS = 120
 TOUCH_TOL = 0.004
 DEDUP_BARS = 20
 
-_RATIO_SCORE = {0.382: 52, 0.5: 56, 0.618: 62, 0.786: 54}
+_RATIO_SCORE = {0.5: 58, 0.618: 64}
 
 
 def _date(df: pd.DataFrame, idx: int) -> str:
@@ -34,12 +34,11 @@ def _touch_event(df: pd.DataFrame, idx: int, ratio: float, level: float,
         "bar_idx": int(idx),
         "price": round(float(level), 4),
         "kind": "fibonacci",
-        # 直接显示完整比例，避免统一短标签截断成0.61或0.78。
         "label": f"{ratio:g}",
         "direction": "range",
         "star": False,
         "detail": (
-            f"{_date(df, idx)} 价格触及大级别已确认波段的{ratio:g}回撤位"
+            f"{_date(df, idx)} 价格触及大结构已确认波段的{ratio:g}回撤位"
             f"{level:.2f}（{role}）；该位置只作结构参考，不单独构成买卖信号。"
         ),
         "lines": [],
@@ -53,7 +52,7 @@ def _touch_event(df: pd.DataFrame, idx: int, ratio: float, level: float,
 
 
 def find_fibonacci_touches(df: pd.DataFrame, pivots: pd.DataFrame) -> list[dict]:
-    del pivots  # 大级别Fib统一使用15% ZigZag，避免小pivot重复计算。
+    del pivots  # 统一使用大结构15% ZigZag，避免小pivot生成伪Fib。
     zz = piv_mod.zigzag(df, min_pct=MAJOR_ZZ_PCT).reset_index(drop=True)
     if len(zz) < 2:
         return []
