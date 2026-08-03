@@ -21,9 +21,11 @@ jobs:
         run: |
           python - <<'PY'
           from backend.app.main_fast import app
+          from backend.app import analysis_v5
           paths = {getattr(r, 'path', '') for r in app.routes}
           assert '/api/chart' in paths, paths
-          print('main_fast import and /api/chart route OK')
+          assert analysis_v5.ANALYSIS_VERSION == 'analysis_v5.0'
+          print('main_fast and analysis_v5 import OK')
           PY
       - name: Performance refactor equivalence
         run: |
@@ -46,7 +48,6 @@ jobs:
               'amount': rng.uniform(1e4, 1e7, n),
           })
 
-          # 新 compute_all 与原逐函数串联结果一致。
           ref_ind = indicators.add_ma(df)
           ref_ind = indicators.add_ema(ref_ind)
           ref_ind = indicators.add_macd(ref_ind)
@@ -100,7 +101,6 @@ jobs:
               return tops, bots
 
           assert divergence._series_pivots(new_ind['close'], 3, 3) == ref_series(new_ind['close'], 3, 3)
-          # 三个指标调用后应只产生一套价格pivot缓存。
           for col in ('DIF', 'DEA', 'RSI6'):
               divergence.find_divergences(new_ind, col)
           assert len(new_ind.attrs.get('_ryan_div_price_pivots', {})) == 1
@@ -110,8 +110,11 @@ jobs:
           assert len(new_ind.attrs.get('_ryan_pivot_cache', {})) == 1
           print('indicator/pivot/divergence equivalence OK')
           PY
+      - name: Analysis v5 causal validation
+        run: python scripts/validate_analysis_v5.py
       - name: Frontend syntax
         run: |
           node --check frontend/js/api.js
           node --check frontend/js/app.js
+          node --check frontend/js/ema_overlay.js
           node --check frontend/js/fast_bundle.js
