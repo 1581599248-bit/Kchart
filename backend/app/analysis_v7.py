@@ -1,10 +1,11 @@
-"""推背图 v7.1：严格波浪、大结构Fib、方向化形态与反转优先裁决。"""
+"""推背图 v7.2：严格波浪、大结构Fib、方向化形态与大结构显示裁决。"""
 from __future__ import annotations
 
 from . import analysis_v5 as base
 from . import fibonacci_history
 from . import harmonics_history
 from . import indicators
+from . import pattern_display_v8
 from . import pattern_taxonomy_v8
 from . import patterns as base_patterns
 from . import patterns_ext
@@ -14,7 +15,7 @@ from . import strict_tops_v8
 from . import structures_v7
 from . import waves_v7
 
-ANALYSIS_VERSION = "analysis_v7.1"
+ANALYSIS_VERSION = "analysis_v7.2"
 
 _OLD_WAVE_KINDS = {"wave_up5", "wave_down_abc", "wave_up_abc", "wave_down5"}
 _REPLACED_TOP_KINDS = {"double_top", "head_shoulders_top"}
@@ -45,7 +46,7 @@ def _strict_patterns(df, pivots, timeframe: str) -> list[dict]:
 
 
 def _historical_traces(pattern_annotations: list[dict]) -> tuple[list[dict], list[dict]]:
-    """历史已确认结构保留描摹，并在结构末端只标一次形态名称。"""
+    """已筛选的大结构保留描摹，并在结构末端标一次形态名称。"""
     visible: list[dict] = []
     traces: list[dict] = []
     for event in pattern_annotations:
@@ -79,8 +80,12 @@ def analyze(df, timeframe: str = "1d") -> dict:
         return {"annotations": [], "summary": {}}
 
     pivots = piv_mod.find_pivots(d)
-    patterns = _strict_patterns(d, pivots, timeframe)
-    pattern_annotations, patterns_enriched = base._pattern_annotations(d, pivots, patterns)
+    patterns_all = _strict_patterns(d, pivots, timeframe)
+
+    # 后台保留全部候选供summary使用；主图仅描摹大级别且非重叠的核心结构。
+    _, patterns_enriched = base._pattern_annotations(d, pivots, patterns_all)
+    display_patterns = pattern_display_v8.select_display_patterns(d, patterns_all)
+    pattern_annotations, _ = base._pattern_annotations(d, pivots, display_patterns)
     pattern_visible, trace_events = _historical_traces(pattern_annotations)
 
     annotations = (
@@ -106,7 +111,8 @@ def analyze(df, timeframe: str = "1d") -> dict:
         "diagnostics": {
             "analysis_version": ANALYSIS_VERSION,
             "bars_scanned": len(d),
-            "patterns": len(patterns_enriched),
+            "patterns_detected": len(patterns_enriched),
+            "patterns_displayed": len(display_patterns),
             "historical_traces": len(trace_events),
             "annotations": len(annotations),
             "causal": True,
