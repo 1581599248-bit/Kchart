@@ -58,6 +58,11 @@
     return p;
   }
 
+  function prefetchChart(tsCode, timeframe) {
+    if (!tsCode) return;
+    chart(tsCode, timeframe || '1d', false).catch(() => null);
+  }
+
   function clearChartCache(tsCode, timeframe) {
     chartCache.delete(chartKey(tsCode, timeframe));
   }
@@ -67,6 +72,7 @@
     meta:       () => get('/meta'),
     search:     (q, limit) => get('/search', { q, limit: limit || 20 }),
     chart,
+    prefetchChart,
     clearChartCache,
     // 保留旧接口，便于回退和 mock 模式。
     bars:       (ts_code, timeframe, start, end) => get('/bars', { ts_code, timeframe, start, end }),
