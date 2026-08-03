@@ -1,11 +1,4 @@
-/* signal_quality.js — 主图信号质量门控。
- *
- * 后端保留完整候选用于研究；前端只展示可交易性更高的事件：
- * 1) 未突破的形态构筑不直接上图；
- * 2) 同方向、相近时间的重复信号只留优先级最高者；
- * 3) 同一标签设置冷却期；
- * 4) Fib保持中性位置标签，不与方向信号竞争。
- */
+/* signal_quality.js — 主图信号质量门控。 */
 (function () {
   'use strict';
 
@@ -14,7 +7,7 @@
 
   const CONFIRMED_PATTERN_LABELS = new Set([
     '突破颈线', '跌破颈线', '向上突破', '向下跌破',
-    '突破趋势', '跌破趋势', '结构失效',
+    '突破趋势', '跌破趋势', '结构失效', '扩散上破', '扩散下破',
   ]);
 
   const KIND_PRIORITY = {
@@ -26,20 +19,28 @@
     fibonacci: 55,
   };
 
+  function isPatternConfirmation(a) {
+    return a.kind === 'pattern' && CONFIRMED_PATTERN_LABELS.has(String(a.label || ''));
+  }
+
   function labelPriority(a) {
     let p = KIND_PRIORITY[a.kind] || 40;
     if (a.star) p += 30;
+    if (a.history_label) p = 62;
     if (a.label === 'MACD顶背离' || a.label === 'MACD底背离') p += 6;
-    if (a.label === 'Fib0.618') p += 5;
-    if (a.label === 'Fib0.5') p += 3;
+    if (a.label === '0.618') p += 5;
+    if (a.label === '0.5') p += 3;
     if (a.label === '结构失效') p -= 8;
     return p;
   }
 
   function shouldKeepBasic(a, lastBarIdx, idx) {
+    // 历史形态描摹和形态名强制保留。
+    if (a.trace_only || a.history_label) return true;
     if (a.kind === 'pattern') {
-      if (a.star || CONFIRMED_PATTERN_LABELS.has(a.label)) return true;
-      // 形态构筑阶段容易反复重绘，只保留在分析卡，不直接污染主图。
+      // 已确认突破/跌破及失效动作强制保留。
+      if (a.star || isPatternConfirmation(a)) return true;
+      // 未确认的构筑形态不上主图。
       return false;
     }
     if (a.active === false && idx < lastBarIdx - 160) return false;
@@ -66,7 +67,12 @@
       const prio = labelPriority(a);
       const label = String(a.label || '');
 
-      // 同一标签30根以内只保留更重要的一次；结构确认与谐波星标例外。
+      // 历史形态名与确认动作属于结构档案，不参与信号去重。
+      if (a.trace_only || a.history_label || isPatternConfirmation(a)) {
+        kept.push({ a, idx, prio });
+        continue;
+      }
+
       const previous = lastLabel.get(label);
       if (previous && idx - previous.idx < 30 && !a.star) {
         if (prio <= previous.prio) continue;
@@ -74,9 +80,10 @@
         if (pos >= 0) kept.splice(pos, 1);
       }
 
-      // Fib属于中性位置提示：同一根最多保留一个，以0.618/0.5优先。
       if (a.kind === 'fibonacci') {
-        const conflict = kept.filter(k => k.a.kind === 'fibonacci' && Math.abs(k.idx - idx) <= 2);
+        const conflict = kept.filter(k =>
+          k.a.kind === 'fibonacci' && Math.abs(k.idx - idx) <= 2
+        );
         if (conflict.length) {
           const best = conflict.reduce((m, k) => labelPriority(k.a) > labelPriority(m.a) ? k : m);
           if (labelPriority(best.a) >= prio) continue;
@@ -91,9 +98,14 @@
         continue;
       }
 
-      // 同方向8根内属于同一交易叙事，只留最有解释力的一项。
+      // 只有指标、趋势、背离等交易信号参与同方向互斥；结构事件不参与。
       const directional = kept.filter(k =>
-        k.a.kind !== 'fibonacci'
+        !k.a.trace_only
+        && !k.a.history_label
+        && !isPatternConfirmation(k.a)
+        && k.a.kind !== 'pattern'
+        && k.a.kind !== 'fibonacci'
+        && a.kind !== 'pattern'
         && k.a.direction === a.direction
         && Math.abs(k.idx - idx) <= 8
       );
