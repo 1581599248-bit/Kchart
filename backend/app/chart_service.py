@@ -20,7 +20,7 @@ from . import main as legacy
 log = logging.getLogger("ryan.chart_service")
 _SH_TZ = ZoneInfo("Asia/Shanghai")
 _BUNDLE_VERSION = "bundle_v6"
-# 前端实际使用的指标；EMA20/EMA60常驻主图。
+# 前端实际使用的指标；均线由MA/EMA分组开关控制，默认关闭。
 _BUNDLE_INDICATOR_COLS = (
     "MA5", "MA10", "MA20", "MA60",
     "EMA20", "EMA60",
@@ -148,10 +148,10 @@ def build(code: str, timeframe: str = "1d", force: bool = False) -> dict:
             return cached
 
         computed = indicators.compute_all(df)
-        # v5从2020展示起点扫描全部K线，不再只分析最近800根。
         analysis_df = computed.reset_index(drop=True)
         work = analysis_df.rename(columns={"ts": "trade_date"})
-        analysis = analysis_mod.analyze(work, timeframe)
+        asset_kind = "index" if ts_api.is_index(code) else "equity"
+        analysis = analysis_mod.analyze(work, timeframe, asset_kind=asset_kind)
         analysis["annotations"] = legacy._annotations_to_epoch(
             analysis["annotations"], analysis_df
         )

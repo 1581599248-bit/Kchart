@@ -1,0 +1,25 @@
+name: Live Pattern Probe
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/index_reversals_v17.py'
+      - 'backend/app/analysis_v7.py'
+      - 'backend/app/chart_service.py'
+      - 'backend/app/chart_service_v7.py'
+      - 'scripts/live_index_reversal_release_v17.py'
+      - '.github/workflows/live-pattern-probe.yml'
+
+jobs:
+  index-reversal-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Run final causal six-index audit
+        run: python scripts/live_index_reversal_release_v17.py

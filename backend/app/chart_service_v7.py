@@ -6,7 +6,7 @@ from . import analysis_v7
 from . import chart_service as _base
 
 _base.analysis_mod = analysis_v7
-_base._BUNDLE_VERSION = "bundle_v10_safe"
+_base._BUNDLE_VERSION = "bundle_v11_index_reversal"
 
 build = _base.build
 get = _base.get
