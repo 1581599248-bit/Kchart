@@ -1,7 +1,9 @@
-/* api.js — 统一 fetch 封装 + 错误处理 + “计算中”轮询 */
+/* api.js — 统一 fetch 封装 + 图表 bundle 浏览器内存缓存 */
 (function () {
   'use strict';
   const BASE = '/api';
+  const chartCache = new Map();
+  const chartPending = new Map();
 
   function qs(params) {
     const p = Object.entries(params || {})
@@ -19,10 +21,9 @@
     toast._t = setTimeout(() => el.classList.add('hidden'), 3500);
   }
 
-  // 后端“计算中”约定：HTTP 202 或 {status:'computing'} → 轮询直到就绪
   async function get(path, params, opts) {
-    const maxPoll = (opts && opts.maxPoll) || 60;      // 最多 60 次
-    const interval = (opts && opts.interval) || 2000;  // 2s
+    const maxPoll = (opts && opts.maxPoll) || 60;
+    const interval = (opts && opts.interval) || 2000;
     for (let i = 0; i <= maxPoll; i++) {
       let resp;
       try {
@@ -44,11 +45,30 @@
   }
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+  function chartKey(tsCode, timeframe) { return `${String(tsCode).toUpperCase()}@${timeframe || '1d'}`; }
+
+  async function chart(tsCode, timeframe, refresh) {
+    const key = chartKey(tsCode, timeframe);
+    if (!refresh && chartCache.has(key)) return chartCache.get(key);
+    if (!refresh && chartPending.has(key)) return chartPending.get(key);
+    const p = get('/chart', { ts_code: tsCode, timeframe: timeframe || '1d', refresh: refresh ? 1 : 0 })
+      .then(data => { chartCache.set(key, data); return data; })
+      .finally(() => chartPending.delete(key));
+    chartPending.set(key, p);
+    return p;
+  }
+
+  function clearChartCache(tsCode, timeframe) {
+    chartCache.delete(chartKey(tsCode, timeframe));
+  }
 
   window.API = {
     toast,
     meta:       () => get('/meta'),
     search:     (q, limit) => get('/search', { q, limit: limit || 20 }),
+    chart,
+    clearChartCache,
+    // 保留旧接口，便于回退和 mock 模式。
     bars:       (ts_code, timeframe, start, end) => get('/bars', { ts_code, timeframe, start, end }),
     indicators: (ts_code, timeframe) => get('/indicators', { ts_code, timeframe }),
     analysis:   (ts_code, timeframe, refresh, start) => get('/analysis', { ts_code, timeframe, start, refresh: refresh ? 1 : 0 }),
