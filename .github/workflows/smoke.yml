@@ -21,11 +21,14 @@ jobs:
         run: |
           python - <<'PY'
           from backend.app.main_fast import app
-          from backend.app import analysis_v5
+          from backend.app import analysis_v5, analysis_v7, chart_service_v7
           paths = {getattr(r, 'path', '') for r in app.routes}
           assert '/api/chart' in paths, paths
           assert analysis_v5.ANALYSIS_VERSION == 'analysis_v5.0'
-          print('main_fast and analysis_v5 import OK')
+          assert analysis_v7.ANALYSIS_VERSION == 'analysis_v7.0'
+          assert chart_service_v7._base.analysis_mod is analysis_v7
+          assert chart_service_v7._base._BUNDLE_VERSION == 'bundle_v7'
+          print('main_fast v7 chart route import OK')
           PY
       - name: Performance refactor equivalence
         run: |
@@ -112,9 +115,21 @@ jobs:
           PY
       - name: Analysis v5 causal validation
         run: python scripts/validate_analysis_v5.py
+      - name: Analysis v7 strict structure validation
+        run: python scripts/validate_analysis_v7.py
       - name: Frontend syntax
         run: |
           node --check frontend/js/api.js
           node --check frontend/js/app.js
           node --check frontend/js/ema_overlay.js
+          node --check frontend/js/analysis_view.js
+          node --check frontend/js/signal_quality.js
+          node --check frontend/js/history_structure_labels.js
           node --check frontend/js/fast_bundle.js
+      - name: Unified render path assertions
+        run: |
+          grep -q 'SignalQuality.filterAnnotations' frontend/js/fast_bundle.js
+          grep -q 'HistoryStructureLabels.refresh' frontend/js/fast_bundle.js
+          grep -q '突破颈线' frontend/js/signal_quality.js
+          grep -q '跌破颈线' frontend/js/signal_quality.js
+          grep -q 'history_label' backend/app/analysis_v7.py
