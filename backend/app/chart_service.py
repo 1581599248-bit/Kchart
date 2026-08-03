@@ -13,17 +13,17 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from . import analysis as analysis_mod
+from . import analysis_v5 as analysis_mod
 from . import chart_cache, config, indicators, ts_api
 from . import main as legacy
 
 log = logging.getLogger("ryan.chart_service")
 _SH_TZ = ZoneInfo("Asia/Shanghai")
-_ANALYSIS_BARS = 800
-_BUNDLE_VERSION = "bundle_v2"
-# 前端实际使用的指标；不再把未展示的 ADX/ROC/ATR 等数组塞进大 JSON。
+_BUNDLE_VERSION = "bundle_v3"
+# 前端实际使用的指标；EMA20/EMA60常驻主图。
 _BUNDLE_INDICATOR_COLS = (
     "MA5", "MA10", "MA20", "MA60",
+    "EMA20", "EMA60",
     "BOLL_MID", "BOLL_UP", "BOLL_DN",
     "DIF", "DEA", "MACD_HIST",
     "K", "D", "J",
@@ -57,11 +57,7 @@ def _expected_trade_date(now: dt.datetime | None = None) -> dt.date | None:
 
 
 def _cache_stale(payload: dict) -> bool:
-    """判断 bundle 是否需要后台刷新。
-
-    盘后不仅看 cached_at，还检查 data_asof。上游在15点多尚未发布当日日线时，
-    旧数据不会被误标成“今天已更新”，后续访问会继续触发刷新。
-    """
+    """判断 bundle 是否需要后台刷新。"""
     if payload.get("bundle_version") != _BUNDLE_VERSION:
         return True
     if payload.get("analysis_version") != analysis_mod.ANALYSIS_VERSION:
@@ -102,7 +98,6 @@ def _load_live_daily(code: str) -> pd.DataFrame:
 
 
 def _bars_payload(df: pd.DataFrame) -> list[dict]:
-    """只返回图表实际消费的OHLCV字段，避免无用 amount 增大传输体积。"""
     epochs = legacy._to_epoch_sec(df["ts"])
     return [
         {
@@ -118,7 +113,6 @@ def _bars_payload(df: pd.DataFrame) -> list[dict]:
 
 
 def _indicator_payload(computed: pd.DataFrame) -> dict:
-    """成交量已在bars中，不再在指标响应里重复一份。"""
     epochs = legacy._to_epoch_sec(computed["ts"])
     out = {"times": [int(x) for x in epochs]}
     for col in _BUNDLE_INDICATOR_COLS:
@@ -143,7 +137,6 @@ def build(code: str, timeframe: str = "1d", force: bool = False) -> dict:
             raise ValueError(f"数据不足以生成图表: {code} {timeframe}")
         asof = str(pd.to_datetime(df["ts"].iloc[-1]).date())
 
-        # 强制刷新时若上游仍未产生新K线，不重复跑高耗时形态分析。
         if (cached is not None
                 and cached.get("bundle_version") == _BUNDLE_VERSION
                 and cached.get("data_asof") == asof
@@ -155,8 +148,8 @@ def build(code: str, timeframe: str = "1d", force: bool = False) -> dict:
             return cached
 
         computed = indicators.compute_all(df)
-        # 保留现有算法与800根分析窗口，不通过缩短分析范围换速度。
-        analysis_df = computed.tail(_ANALYSIS_BARS).reset_index(drop=True)
+        # v5从2020展示起点扫描全部K线，不再只分析最近800根。
+        analysis_df = computed.reset_index(drop=True)
         work = analysis_df.rename(columns={"ts": "trade_date"})
         analysis = analysis_mod.analyze(work, timeframe)
         analysis["annotations"] = legacy._annotations_to_epoch(
