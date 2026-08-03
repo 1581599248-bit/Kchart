@@ -21,7 +21,6 @@ def _strict_patterns(df, pivots, timeframe: str) -> list[dict]:
     original = base_patterns.find_patterns(
         df, pivots, asof_bar=len(df) - 1, timeframe=timeframe
     )
-    # 旧波浪计数过宽，旧五点扩散三角含义不清，全部由v7严格模块替代。
     original = [e for e in original if str(e.get("kind")) not in _OLD_WAVE_KINDS]
     extra = [
         e for e in patterns_ext.find_patterns_ext(df, pivots, timeframe=timeframe)
@@ -36,7 +35,7 @@ def _strict_patterns(df, pivots, timeframe: str) -> list[dict]:
 
 
 def _historical_traces(pattern_annotations: list[dict]) -> tuple[list[dict], list[dict]]:
-    """已确认/已失效历史结构保留描摹线；构筑中结构不进入主图。"""
+    """历史已确认结构保留描摹，并在结构末端只标一次形态名称。"""
     visible: list[dict] = []
     traces: list[dict] = []
     for event in pattern_annotations:
@@ -51,6 +50,7 @@ def _historical_traces(pattern_annotations: list[dict]) -> tuple[list[dict], lis
             trace = dict(event)
             trace.update({
                 "trace_only": True,
+                "history_label": True,
                 "star": False,
                 "lines": [],
                 "zones": [],
@@ -83,7 +83,6 @@ def analyze(df, timeframe: str = "1d") -> dict:
     annotations = base._density(annotations)
 
     for event in annotations:
-        # 斐波那契标签已直接使用完整比例；其他标签仍限制为8字。
         if event.get("kind") == "fibonacci":
             event["label"] = str(event.get("label") or "")
         else:
