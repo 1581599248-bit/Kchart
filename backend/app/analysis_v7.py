@@ -1,19 +1,20 @@
-"""推背图 v7：严格波浪、大级别Fib、确认型MACD与历史结构描摹。"""
+"""推背图 v7.1：严格波浪、大结构Fib、方向化形态与反转优先裁决。"""
 from __future__ import annotations
 
 from . import analysis_v5 as base
 from . import fibonacci_history
 from . import harmonics_history
 from . import indicators
+from . import pattern_taxonomy_v8
 from . import patterns as base_patterns
 from . import patterns_ext
 from . import pivots as piv_mod
 from . import signals_v7
-from . import strict_tops_v7
+from . import strict_tops_v8
 from . import structures_v7
 from . import waves_v7
 
-ANALYSIS_VERSION = "analysis_v7.0"
+ANALYSIS_VERSION = "analysis_v7.1"
 
 _OLD_WAVE_KINDS = {"wave_up5", "wave_down_abc", "wave_up_abc", "wave_down5"}
 _REPLACED_TOP_KINDS = {"double_top", "head_shoulders_top"}
@@ -23,7 +24,7 @@ def _strict_patterns(df, pivots, timeframe: str) -> list[dict]:
     original = base_patterns.find_patterns(
         df, pivots, asof_bar=len(df) - 1, timeframe=timeframe
     )
-    # 旧波浪、旧M顶、旧头肩顶和旧五点扩散结构全部退出v7主链。
+    # 旧波浪、旧M顶、旧头肩顶和旧五点扩散结构全部退出主链。
     original = [
         e for e in original
         if str(e.get("kind")) not in (_OLD_WAVE_KINDS | _REPLACED_TOP_KINDS)
@@ -32,13 +33,15 @@ def _strict_patterns(df, pivots, timeframe: str) -> list[dict]:
         e for e in patterns_ext.find_patterns_ext(df, pivots, timeframe=timeframe)
         if str(e.get("kind")) != "broadening_triangle"
     ]
-    return base._dedupe_patterns(
+    detected = base._dedupe_patterns(
         original
         + extra
-        + strict_tops_v7.find_strict_top_patterns(df, pivots)
+        + strict_tops_v8.find_strict_top_patterns(df, pivots)
         + waves_v7.find_waves(df)
         + structures_v7.find_broadening_breaks(df, pivots)
     )
+    # 命名统一为牛/熊方向；同区间反转形态优先于矩形/三角整理。
+    return pattern_taxonomy_v8.apply_pattern_taxonomy(detected)
 
 
 def _historical_traces(pattern_annotations: list[dict]) -> tuple[list[dict], list[dict]]:
