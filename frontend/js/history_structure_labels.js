@@ -5,7 +5,7 @@
   'use strict';
 
   const AV = window.AnalysisView;
-  if (!AV || AV.prototype.__historyStructureLabelsInstalled) return;
+  if (!AV) return;
   const GOLD = '#f0b90b';
 
   function install(view) {
@@ -73,12 +73,19 @@
     view.__requestHistoryLabels = () => { if (requestUpdate) requestUpdate(); };
   }
 
-  const previousLoad = AV.prototype.load;
-  AV.prototype.load = async function () {
-    await previousLoad.call(this);
-    install(this);
-    if (this.__requestHistoryLabels) this.__requestHistoryLabels();
-  };
+  function refresh(view) {
+    install(view);
+    if (view.__requestHistoryLabels) view.__requestHistoryLabels();
+  }
 
-  AV.prototype.__historyStructureLabelsInstalled = true;
+  window.HistoryStructureLabels = { install, refresh };
+
+  if (!AV.prototype.__historyStructureLabelsInstalled) {
+    const previousLoad = AV.prototype.load;
+    AV.prototype.load = async function () {
+      await previousLoad.call(this);
+      refresh(this);
+    };
+    AV.prototype.__historyStructureLabelsInstalled = true;
+  }
 })();
