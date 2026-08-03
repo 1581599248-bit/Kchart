@@ -6,7 +6,7 @@ on:
       - 'backend/app/**'
       - 'scripts/live_pattern_probe_v11.py'
       - 'scripts/live_reversal_debug_v13.py'
-      - 'scripts/live_reversal_probe_v13.py'
+      - 'scripts/live_reversal_probe_v14.py'
       - '.github/workflows/live-pattern-probe.yml'
 
 jobs:
@@ -24,5 +24,5 @@ jobs:
         run: python scripts/live_pattern_probe_v11.py
       - name: Trace v13 hard-rule candidates
         run: python scripts/live_reversal_debug_v13.py
-      - name: Validate latest-trigger v13 reversal engine
-        run: python scripts/live_reversal_probe_v13.py
+      - name: Validate strict-confirm v14 reversal engine
+        run: python scripts/live_reversal_probe_v14.py
