@@ -14,12 +14,21 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from . import analysis as analysis_mod
-from . import chart_cache, indicators, ts_api
+from . import chart_cache, config, indicators, ts_api
 from . import main as legacy
 
 log = logging.getLogger("ryan.chart_service")
 _SH_TZ = ZoneInfo("Asia/Shanghai")
 _ANALYSIS_BARS = 800
+# 前端实际使用的指标；不再把未展示的 ADX/ROC/ATR 等数组塞进大 JSON。
+_BUNDLE_INDICATOR_COLS = (
+    "MA5", "MA10", "MA20", "MA60",
+    "BOLL_MID", "BOLL_UP", "BOLL_DN",
+    "DIF", "DEA", "MACD_HIST",
+    "K", "D", "J",
+    "RSI6", "RSI12",
+    "WR6", "WR10",
+)
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 _refreshing: set[str] = set()
@@ -33,25 +42,62 @@ def _lock_for(code: str, timeframe: str) -> threading.Lock:
         return _locks.setdefault(key, threading.Lock())
 
 
-def _cache_stale(payload: dict) -> bool:
-    """不请求上游 API 的轻量时效判断。
+def _expected_trade_date(now: dt.datetime | None = None) -> dt.date | None:
+    """按上海日期读取交易日历，避免 Render 的 UTC 日期影响判断。"""
+    now = now or dt.datetime.now(_SH_TZ)
+    try:
+        cal = ts_api._calendar_df()
+        today = pd.Timestamp(now.date())
+        opened = cal[(cal["is_open"] == 1) & (cal["cal_date"] <= today)]["cal_date"]
+        return None if opened.empty else opened.max().date()
+    except Exception:
+        log.exception("读取最新交易日失败，退回时间TTL判断")
+        return None
 
-    交易日 15:20 后要求缓存当天盘后生成；盘前允许沿用上一盘后结果。
-    周末允许沿用最近 72 小时结果。节假日即使 asof 不变，刷新 cached_at 后也视为最新。
+
+def _cache_stale(payload: dict) -> bool:
+    """判断 bundle 是否需要后台刷新。
+
+    关键修复：盘后不仅看 cached_at，还要检查 data_asof。上游在15:20尚未发布
+    当日日线时，旧数据不会再被误标成“今天已更新”，后续访问会继续触发刷新。
     """
     if payload.get("analysis_version") != analysis_mod.ANALYSIS_VERSION:
         return True
     cached_at = payload.get("cached_at")
     if not cached_at:
         return True
+
     now = dt.datetime.now(_SH_TZ)
     made = dt.datetime.fromtimestamp(int(cached_at), _SH_TZ)
     age = (now - made).total_seconds()
+    try:
+        data_asof = dt.date.fromisoformat(str(payload.get("data_asof")))
+    except (TypeError, ValueError):
+        return True
+
     if now.weekday() >= 5:
         return age > 72 * 3600
-    if (now.hour, now.minute) >= (15, 20):
-        return not (made.date() == now.date() and (made.hour, made.minute) >= (15, 20))
+
+    # 16:00后要求数据日期追上交易日历；未追上则持续后台重试。
+    if (now.hour, now.minute) >= (16, 0):
+        expected = _expected_trade_date(now)
+        if expected is not None and data_asof < expected:
+            return True
+        # 即使数据日期已到今天，也要求本次缓存是在收盘后生成，避免盘中半成品。
+        if expected == now.date():
+            return not (made.date() == now.date() and (made.hour, made.minute) >= (15, 20))
+        return age > 24 * 3600
+
     return age > 24 * 3600
+
+
+def _load_live_daily(code: str) -> pd.DataFrame:
+    """统一接口始终走可增量追新的 API 缓存，不使用可能滞后的 baked 快照。"""
+    if ts_api.is_index(code):
+        df = ts_api.load_index_daily(code, start=config.KLINE_DISPLAY_START)
+    else:
+        df = ts_api.load_daily_qfq(code, start=config.KLINE_DISPLAY_START)
+    return df.rename(columns={"trade_date": "ts"})
 
 
 def _bars_payload(df: pd.DataFrame) -> list[dict]:
@@ -76,7 +122,7 @@ def _indicator_payload(computed: pd.DataFrame) -> dict:
         "times": [int(x) for x in epochs],
         "vol": [legacy._json_safe(v) for v in computed["vol"]],
     }
-    for col in legacy._INDICATOR_COLS:
+    for col in _BUNDLE_INDICATOR_COLS:
         if col in computed.columns:
             out[col] = [legacy._json_safe(v) for v in computed[col]]
     return out
@@ -85,15 +131,28 @@ def _indicator_payload(computed: pd.DataFrame) -> dict:
 def build(code: str, timeframe: str = "1d", force: bool = False) -> dict:
     """同步生成完整 bundle；同标的并发请求只计算一次。"""
     code = code.upper().strip()
+    if timeframe != "1d":
+        raise ValueError("高速统一接口当前仅支持日线")
     lock = _lock_for(code, timeframe)
     with lock:
         cached = chart_cache.get(code, timeframe)
         if not force and cached is not None and not _cache_stale(cached):
             return cached
 
-        df = legacy._load_bars_df(code, timeframe, None, None)
+        df = _load_live_daily(code)
         if df.empty or len(df) < 60:
             raise ValueError(f"数据不足以生成图表: {code} {timeframe}")
+        asof = str(pd.to_datetime(df["ts"].iloc[-1]).date())
+
+        # 强制刷新时若上游仍未产生新K线，不重复跑高耗时形态分析。
+        if (cached is not None
+                and cached.get("data_asof") == asof
+                and cached.get("analysis_version") == analysis_mod.ANALYSIS_VERSION
+                and cached.get("analysis")):
+            expected = _expected_trade_date()
+            if expected is not None and dt.date.fromisoformat(asof) >= expected:
+                return chart_cache.save(code, timeframe, cached)
+            return cached
 
         computed = indicators.compute_all(df.copy())
         # 历史形态扫描是主要耗时。K线与指标仍返回完整展示区间，
@@ -104,8 +163,7 @@ def build(code: str, timeframe: str = "1d", force: bool = False) -> dict:
         analysis["annotations"] = legacy._annotations_to_epoch(
             analysis["annotations"], analysis_df
         )
-        asof = str(pd.to_datetime(df["ts"].iloc[-1]).date())
-        name = ts_api.get_security_name(code) or code
+        name = config.BROAD_INDEX_NAMES.get(code) or ts_api.get_security_name(code) or code
         analysis.update({
             "ts_code": code,
             "timeframe": timeframe,
@@ -170,9 +228,17 @@ def get(code: str, timeframe: str = "1d", refresh: bool = False) -> dict:
     return result
 
 
-def refresh_many(codes: list[str], timeframe: str = "1d") -> None:
+def refresh_many(codes: list[str], timeframe: str = "1d") -> dict:
+    report = {"requested": 0, "updated": 0, "failed": 0}
     for code in dict.fromkeys(codes):
+        report["requested"] += 1
+        before = chart_cache.get(code, timeframe)
+        before_asof = before.get("data_asof") if before else None
         try:
-            build(code, timeframe, force=True)
+            after = build(code, timeframe, force=True)
+            if after.get("data_asof") != before_asof:
+                report["updated"] += 1
         except Exception:
+            report["failed"] += 1
             log.exception("盘后批量刷新失败（跳过）: %s", code)
+    return report
