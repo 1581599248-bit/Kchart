@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
-from . import chart_service, config, main as legacy, results_db, updater
+from . import chart_service, config, main as legacy, results_db, ts_api, updater
 from .ts_api import TsApiError
 
 log = logging.getLogger("ryan.main_fast")
@@ -61,11 +61,24 @@ def api_chart_path(response: Response, ts_code: str, refresh: int = 0):
 app.mount("/", legacy.app)
 
 
+def _prewarm_search() -> None:
+    try:
+        rows = ts_api.list_securities()
+        log.info("证券搜索清单已预热：%d 条", len(rows))
+    except Exception:
+        log.exception("证券搜索清单预热失败（首次搜索时重试）")
+
+
 def _startup() -> None:
     results_db.get_con().close()
     log.info("高速入口启动：model=%s | TS_URL=%s", config.MODEL_VERSION, config.TS_URL)
     updater.start(chart_service.refresh_many)
-    # 指数 bundle 在后台预热，不阻塞网站启动。
+    # 搜索清单和指数 bundle 都在后台预热，不阻塞网站启动。
+    threading.Thread(
+        target=_prewarm_search,
+        daemon=True,
+        name="security-search-prewarm",
+    ).start()
     threading.Thread(
         target=chart_service.refresh_many,
         args=(list(config.BROAD_INDEX_CODES), "1d"),
