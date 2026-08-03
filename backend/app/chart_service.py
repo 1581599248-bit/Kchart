@@ -20,6 +20,7 @@ from . import main as legacy
 log = logging.getLogger("ryan.chart_service")
 _SH_TZ = ZoneInfo("Asia/Shanghai")
 _ANALYSIS_BARS = 800
+_BUNDLE_VERSION = "bundle_v2"
 # 前端实际使用的指标；不再把未展示的 ADX/ROC/ATR 等数组塞进大 JSON。
 _BUNDLE_INDICATOR_COLS = (
     "MA5", "MA10", "MA20", "MA60",
@@ -58,9 +59,11 @@ def _expected_trade_date(now: dt.datetime | None = None) -> dt.date | None:
 def _cache_stale(payload: dict) -> bool:
     """判断 bundle 是否需要后台刷新。
 
-    关键修复：盘后不仅看 cached_at，还要检查 data_asof。上游在15:20尚未发布
-    当日日线时，旧数据不会再被误标成“今天已更新”，后续访问会继续触发刷新。
+    盘后不仅看 cached_at，还检查 data_asof。上游在15点多尚未发布当日日线时，
+    旧数据不会被误标成“今天已更新”，后续访问会继续触发刷新。
     """
+    if payload.get("bundle_version") != _BUNDLE_VERSION:
+        return True
     if payload.get("analysis_version") != analysis_mod.ANALYSIS_VERSION:
         return True
     cached_at = payload.get("cached_at")
@@ -78,12 +81,10 @@ def _cache_stale(payload: dict) -> bool:
     if now.weekday() >= 5:
         return age > 72 * 3600
 
-    # 16:00后要求数据日期追上交易日历；未追上则持续后台重试。
     if (now.hour, now.minute) >= (16, 0):
         expected = _expected_trade_date(now)
         if expected is not None and data_asof < expected:
             return True
-        # 即使数据日期已到今天，也要求本次缓存是在收盘后生成，避免盘中半成品。
         if expected == now.date():
             return not (made.date() == now.date() and (made.hour, made.minute) >= (15, 20))
         return age > 24 * 3600
@@ -101,6 +102,7 @@ def _load_live_daily(code: str) -> pd.DataFrame:
 
 
 def _bars_payload(df: pd.DataFrame) -> list[dict]:
+    """只返回图表实际消费的OHLCV字段，避免无用 amount 增大传输体积。"""
     epochs = legacy._to_epoch_sec(df["ts"])
     return [
         {
@@ -110,18 +112,15 @@ def _bars_payload(df: pd.DataFrame) -> list[dict]:
             "l": legacy._json_safe(r.low),
             "c": legacy._json_safe(r.close),
             "v": legacy._json_safe(r.vol),
-            "amount": legacy._json_safe(r.amount),
         }
         for t, r in zip(epochs, df.itertuples())
     ]
 
 
 def _indicator_payload(computed: pd.DataFrame) -> dict:
+    """成交量已在bars中，不再在指标响应里重复一份。"""
     epochs = legacy._to_epoch_sec(computed["ts"])
-    out = {
-        "times": [int(x) for x in epochs],
-        "vol": [legacy._json_safe(v) for v in computed["vol"]],
-    }
+    out = {"times": [int(x) for x in epochs]}
     for col in _BUNDLE_INDICATOR_COLS:
         if col in computed.columns:
             out[col] = [legacy._json_safe(v) for v in computed[col]]
@@ -146,6 +145,7 @@ def build(code: str, timeframe: str = "1d", force: bool = False) -> dict:
 
         # 强制刷新时若上游仍未产生新K线，不重复跑高耗时形态分析。
         if (cached is not None
+                and cached.get("bundle_version") == _BUNDLE_VERSION
                 and cached.get("data_asof") == asof
                 and cached.get("analysis_version") == analysis_mod.ANALYSIS_VERSION
                 and cached.get("analysis")):
@@ -154,9 +154,8 @@ def build(code: str, timeframe: str = "1d", force: bool = False) -> dict:
                 return chart_cache.save(code, timeframe, cached)
             return cached
 
-        computed = indicators.compute_all(df.copy())
-        # 历史形态扫描是主要耗时。K线与指标仍返回完整展示区间，
-        # 推背图只扫描最近约 800 个交易日，覆盖当前及近三年的有效结构。
+        computed = indicators.compute_all(df)
+        # 保留现有算法与800根分析窗口，不通过缩短分析范围换速度。
         analysis_df = computed.tail(_ANALYSIS_BARS).reset_index(drop=True)
         work = analysis_df.rename(columns={"ts": "trade_date"})
         analysis = analysis_mod.analyze(work, timeframe)
@@ -171,6 +170,7 @@ def build(code: str, timeframe: str = "1d", force: bool = False) -> dict:
             "name": name,
         })
         payload = {
+            "bundle_version": _BUNDLE_VERSION,
             "ts_code": code,
             "timeframe": timeframe,
             "name": name,
@@ -179,7 +179,7 @@ def build(code: str, timeframe: str = "1d", force: bool = False) -> dict:
             "analysis": analysis,
             "data_asof": asof,
             "analysis_version": analysis_mod.ANALYSIS_VERSION,
-            "currency_note": "个股OHLC为前复权价(元); 指数无复权; vol单位: 日线=手; amount单位: 日线=千元",
+            "currency_note": "个股OHLC为前复权价(元); 指数无复权; vol单位: 日线=手",
             "meta": {"cache_hit": False, "refreshing": False},
         }
         return chart_cache.save(code, timeframe, payload)
