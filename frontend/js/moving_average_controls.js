@@ -1,7 +1,9 @@
-/* moving_average_controls.js — MA/EMA主图均线开关。
+/* moving_average_controls.js — MA/EMA主图均线总开关。
  *
- * MA5/10/20/60与EMA20/60全部放入指标区，默认关闭；用户可逐条开启，
- * 选择保存在浏览器本地。均线数据仍由后端正常计算，仅控制主图显示。
+ * 指标区只显示两个选项：
+ * - MA：统一控制MA5/MA10/MA20/MA60
+ * - EMA：统一控制EMA20/EMA60
+ * 两组默认关闭，选择保存在浏览器本地。后台指标计算与技术分析不受影响。
  */
 (function () {
   'use strict';
@@ -9,21 +11,17 @@
   const proto = window.KLineBoard && window.KLineBoard.prototype;
   if (!proto || proto.__movingAverageControlsInstalled) return;
 
-  const STORAGE_KEY = 'ryan:kline:moving-averages:v1';
-  const DEFINITIONS = [
-    { key: 'ma5', label: 'MA5' },
-    { key: 'ma10', label: 'MA10' },
-    { key: 'ma20', label: 'MA20' },
-    { key: 'ma60', label: 'MA60' },
-    { key: 'ema20', label: 'EMA20' },
-    { key: 'ema60', label: 'EMA60' },
+  const STORAGE_KEY = 'ryan:kline:moving-average-groups:v2';
+  const GROUPS = [
+    { key: 'ma', label: 'MA', series: ['ma5', 'ma10', 'ma20', 'ma60'] },
+    { key: 'ema', label: 'EMA', series: ['ema20', 'ema60'] },
   ];
-  const VALID_KEYS = new Set(DEFINITIONS.map(item => item.key));
+  const VALID_GROUPS = new Set(GROUPS.map(group => group.key));
 
   function loadEnabled() {
     try {
       const raw = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || '[]');
-      return Array.isArray(raw) ? raw.filter(key => VALID_KEYS.has(key)) : [];
+      return Array.isArray(raw) ? raw.filter(key => VALID_GROUPS.has(key)) : [];
     } catch (_) {
       return [];
     }
@@ -32,12 +30,12 @@
   function saveEnabled(enabled) {
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...enabled]));
-    } catch (_) { /* 隐私模式或存储受限时仅维持当前页面状态 */ }
+    } catch (_) { /* 存储受限时只维持当前页面状态 */ }
   }
 
   function ensureState(board) {
-    if (board.enabledMovingAverages instanceof Set) return;
-    board.enabledMovingAverages = new Set(board.mini ? [] : loadEnabled());
+    if (board.enabledMovingAverageGroups instanceof Set) return;
+    board.enabledMovingAverageGroups = new Set(board.mini ? [] : loadEnabled());
   }
 
   function allSeries(board) {
@@ -47,17 +45,18 @@
   function applyVisibility(board) {
     ensureState(board);
     const series = allSeries(board);
-    for (const item of DEFINITIONS) {
-      if (!series[item.key]) continue;
-      const visible = !board.mini && board.enabledMovingAverages.has(item.key);
-      series[item.key].applyOptions({ visible });
+    for (const group of GROUPS) {
+      const visible = !board.mini && board.enabledMovingAverageGroups.has(group.key);
+      for (const seriesKey of group.series) {
+        if (series[seriesKey]) series[seriesKey].applyOptions({ visible });
+      }
     }
   }
 
   function syncControls(board) {
     if (!board.el) return;
-    board.el.querySelectorAll('[data-moving-average]').forEach(cb => {
-      cb.checked = board.enabledMovingAverages.has(cb.dataset.movingAverage);
+    board.el.querySelectorAll('[data-moving-average-group]').forEach(cb => {
+      cb.checked = board.enabledMovingAverageGroups.has(cb.dataset.movingAverageGroup);
     });
   }
 
@@ -66,7 +65,7 @@
     document.querySelectorAll('.kl-board').forEach(root => {
       const board = root.klBoard;
       if (!board || board === source || board.mini) return;
-      board.enabledMovingAverages = new Set(source.enabledMovingAverages);
+      board.enabledMovingAverageGroups = new Set(source.enabledMovingAverageGroups);
       syncControls(board);
       applyVisibility(board);
     });
@@ -78,8 +77,8 @@
     originalBuildDom.call(this);
     if (this.mini) return;
 
-    const group = this.el.querySelector('.ind-group');
-    if (!group || group.querySelector('[data-moving-average]')) return;
+    const indicatorGroup = this.el.querySelector('.ind-group');
+    if (!indicatorGroup || indicatorGroup.querySelector('[data-moving-average-group]')) return;
 
     const fragment = document.createDocumentFragment();
     const title = document.createElement('span');
@@ -87,14 +86,14 @@
     title.textContent = '均线';
     fragment.appendChild(title);
 
-    for (const item of DEFINITIONS) {
+    for (const group of GROUPS) {
       const label = document.createElement('label');
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
-      checkbox.dataset.movingAverage = item.key;
-      checkbox.checked = this.enabledMovingAverages.has(item.key);
+      checkbox.dataset.movingAverageGroup = group.key;
+      checkbox.checked = this.enabledMovingAverageGroups.has(group.key);
       label.appendChild(checkbox);
-      label.appendChild(document.createTextNode(' ' + item.label));
+      label.appendChild(document.createTextNode(' ' + group.label));
       fragment.appendChild(label);
     }
 
@@ -102,14 +101,14 @@
     divider.className = 'ma-control-divider';
     divider.setAttribute('aria-hidden', 'true');
     fragment.appendChild(divider);
-    group.insertBefore(fragment, group.firstChild);
+    indicatorGroup.insertBefore(fragment, indicatorGroup.firstChild);
 
-    group.querySelectorAll('[data-moving-average]').forEach(cb => {
+    indicatorGroup.querySelectorAll('[data-moving-average-group]').forEach(cb => {
       cb.addEventListener('change', () => {
-        const key = cb.dataset.movingAverage;
-        if (cb.checked) this.enabledMovingAverages.add(key);
-        else this.enabledMovingAverages.delete(key);
-        saveEnabled(this.enabledMovingAverages);
+        const key = cb.dataset.movingAverageGroup;
+        if (cb.checked) this.enabledMovingAverageGroups.add(key);
+        else this.enabledMovingAverageGroups.delete(key);
+        saveEnabled(this.enabledMovingAverageGroups);
         applyVisibility(this);
         broadcast(this);
       });
@@ -128,12 +127,12 @@
     applyVisibility(this);
   };
 
-  proto.setMovingAverageVisible = function (key, visible) {
-    if (!VALID_KEYS.has(key) || this.mini) return false;
+  proto.setMovingAverageGroupVisible = function (groupKey, visible) {
+    if (!VALID_GROUPS.has(groupKey) || this.mini) return false;
     ensureState(this);
-    if (visible) this.enabledMovingAverages.add(key);
-    else this.enabledMovingAverages.delete(key);
-    saveEnabled(this.enabledMovingAverages);
+    if (visible) this.enabledMovingAverageGroups.add(groupKey);
+    else this.enabledMovingAverageGroups.delete(groupKey);
+    saveEnabled(this.enabledMovingAverageGroups);
     syncControls(this);
     applyVisibility(this);
     broadcast(this);
@@ -142,7 +141,11 @@
 
   proto.__movingAverageControlsInstalled = true;
   window.MovingAverageControls = {
-    definitions: DEFINITIONS.slice(),
+    groups: GROUPS.map(group => ({
+      key: group.key,
+      label: group.label,
+      series: group.series.slice(),
+    })),
     applyVisibility,
   };
 })();
