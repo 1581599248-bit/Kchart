@@ -1,4 +1,4 @@
-"""推背图v7严格结构验收：不依赖外部行情。"""
+"""推背图v7.2严格结构验收：不依赖外部行情。"""
 from __future__ import annotations
 
 import sys
@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
 import numpy as np
 import pandas as pd
 
-from backend.app import analysis_v7, fibonacci_history, indicators, strict_tops_v7
+from backend.app import analysis_v7, fibonacci_history, indicators, strict_tops_v8
 
 
 def _frame(n: int = 360) -> pd.DataFrame:
@@ -38,7 +38,6 @@ def _pivots(df: pd.DataFrame, rows: list[tuple[int, float, str]]) -> pd.DataFram
 
 def validate_m_top_large_only() -> None:
     df = _frame(240)
-    # 先形成明确前置上涨。
     df.loc[:70, "close"] = np.linspace(78, 119, 71)
     df.loc[:70, "high"] = df.loc[:70, "close"] + 1
     df.loc[:70, "low"] = df.loc[:70, "close"] - 1
@@ -48,12 +47,11 @@ def validate_m_top_large_only() -> None:
     df.loc[146, ["open", "high", "low", "close", "vol"]] = [104, 105, 101, 102, 1_500_000]
 
     valid = _pivots(df, [(70, 120, "H"), (105, 104, "L"), (140, 118, "H")])
-    events = strict_tops_v7.find_strict_top_patterns(df, valid)
+    events = strict_tops_v8.find_strict_top_patterns(df, valid)
     assert any(e["kind"] == "double_top" for e in events), events
 
-    # 只有30根间隔的普通震荡不得判为M顶。
     short = _pivots(df, [(70, 120, "H"), (85, 104, "L"), (100, 118, "H")])
-    events = strict_tops_v7.find_strict_top_patterns(df, short)
+    events = strict_tops_v8.find_strict_top_patterns(df, short)
     assert not any(e["kind"] == "double_top" for e in events), events
 
 
@@ -77,25 +75,22 @@ def validate_head_shoulders_top_strict() -> None:
         (80, 120, "H"), (110, 106, "L"), (145, 132, "H"),
         (180, 104, "L"), (220, 119, "H"),
     ])
-    events = strict_tops_v7.find_strict_top_patterns(df, valid)
+    events = strict_tops_v8.find_strict_top_patterns(df, valid)
     assert any(e["kind"] == "head_shoulders_top" for e in events), events
 
-    # 结构跨度不足80根，即便外形相似也不得判定。
     short = _pivots(df, [
         (120, 120, "H"), (135, 106, "L"), (150, 132, "H"),
         (165, 104, "L"), (180, 119, "H"),
     ])
-    events = strict_tops_v7.find_strict_top_patterns(df, short)
+    events = strict_tops_v8.find_strict_top_patterns(df, short)
     assert not any(e["kind"] == "head_shoulders_top" for e in events), events
 
 
 def validate_fibonacci_large_05_0618_only() -> None:
     df = _frame(220)
-    # 大波段：100→130，80根K线，15倍ATR；随后依次触及0.5和0.618。
     df.loc[10:90, "close"] = np.linspace(100, 130, 81)
     df.loc[10:90, "high"] = df.loc[10:90, "close"] + 0.6
     df.loc[10:90, "low"] = df.loc[10:90, "close"] - 0.6
-    level05 = 115.0
     level0618 = 130 - 0.618 * 30
     df.loc[110, ["open", "high", "low", "close"]] = [114.8, 115.6, 114.5, 115.2]
     df.loc[130, ["open", "high", "low", "close"]] = [111.4, 112.0, 110.9, level0618 + 0.1]
@@ -110,7 +105,6 @@ def validate_fibonacci_large_05_0618_only() -> None:
     assert "0.5" in labels and "0.618" in labels, events
     assert all(not e.get("lines") and not e.get("zones") and not e.get("polylines") for e in events)
 
-    # 50根K线或不足20%的波段都不属于大结构。
     too_short = pd.DataFrame([
         (10, df.loc[10, "trade_date"], 100.0, "L", 15),
         (55, df.loc[55, "trade_date"], 130.0, "H", 60),
@@ -140,8 +134,10 @@ def validate_v7_full_chain() -> None:
         "amount": rng.uniform(1e6, 1e8, n),
     })
     result = analysis_v7.analyze(indicators.compute_all(frame), "1d")
-    assert result["diagnostics"]["analysis_version"] == "analysis_v7.0"
-    assert result["diagnostics"]["causal"] is True
+    diagnostics = result["diagnostics"]
+    assert diagnostics["analysis_version"] == "analysis_v7.2"
+    assert diagnostics["causal"] is True
+    assert diagnostics["patterns_displayed"] <= diagnostics["patterns_detected"]
     for event in result["annotations"]:
         if event.get("kind") == "fibonacci":
             assert event["label"] in {"0.5", "0.618"}, event
@@ -154,4 +150,4 @@ if __name__ == "__main__":
     validate_head_shoulders_top_strict()
     validate_fibonacci_large_05_0618_only()
     validate_v7_full_chain()
-    print("analysis_v7 strict structure validation OK")
+    print("analysis_v7.2 strict structure validation OK")
