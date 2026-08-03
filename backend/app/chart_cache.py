@@ -1,15 +1,14 @@
 """K线、指标与推背图统一缓存。
 
 两级缓存：进程内内存优先，磁盘作为进程重启后的热启动来源。
-磁盘写入采用临时文件原子替换，避免并发读取半截 JSON。
+同时缓存已经序列化的 JSON 字节，热命中时可直接返回，避免再次遍历大对象。
 """
 from __future__ import annotations
 
-import datetime as dt
-import json
-import math
 import threading
 from time import time
+
+import orjson
 
 from . import config
 
@@ -17,7 +16,9 @@ CACHE_DIR = config.DATA_DIR / "chart_cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 _memory: dict[str, dict] = {}
+_raw_memory: dict[str, bytes] = {}
 _lock = threading.RLock()
+_JSON_OPTIONS = orjson.OPT_NON_STR_KEYS | orjson.OPT_SERIALIZE_NUMPY
 
 
 def make_key(code: str, timeframe: str = "1d") -> str:
@@ -29,22 +30,16 @@ def _path(key: str):
     return CACHE_DIR / f"{safe}.json"
 
 
-def _clean(value):
-    """将 numpy 标量、NaN 与日期递归转换为标准 JSON 类型。"""
-    if isinstance(value, dict):
-        return {str(k): _clean(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_clean(v) for v in value]
-    if isinstance(value, (dt.date, dt.datetime)):
-        return value.isoformat()
+def _default(value):
+    """兼容少量 pandas/自定义标量；常见 numpy 类型由 orjson 原生处理。"""
     if hasattr(value, "item"):
         try:
-            return _clean(value.item())
+            return value.item()
         except (TypeError, ValueError):
             pass
-    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
-        return None
-    return value
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    raise TypeError
 
 
 def get(code: str, timeframe: str = "1d") -> dict | None:
@@ -58,26 +53,48 @@ def get(code: str, timeframe: str = "1d") -> dict | None:
     if not path.exists():
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        raw = path.read_bytes()
+        data = orjson.loads(raw)
+    except (OSError, orjson.JSONDecodeError):
         return None
 
     with _lock:
         _memory[key] = data
+        _raw_memory[key] = raw
     return data
+
+
+def get_raw(code: str, timeframe: str = "1d") -> bytes | None:
+    """读取已经编码好的 JSON；供热缓存接口直接返回。"""
+    key = make_key(code, timeframe)
+    with _lock:
+        raw = _raw_memory.get(key)
+        if raw is not None:
+            return raw
+    path = _path(key)
+    if not path.exists():
+        return None
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    with _lock:
+        _raw_memory[key] = raw
+    return raw
 
 
 def save(code: str, timeframe: str, payload: dict) -> dict:
     key = make_key(code, timeframe)
-    data = _clean(dict(payload))
+    data = dict(payload)
     data["cached_at"] = int(time())
+    raw = orjson.dumps(data, option=_JSON_OPTIONS, default=_default)
     path = _path(key)
     tmp = path.with_suffix(".json.tmp")
-    raw = json.dumps(data, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-    tmp.write_text(raw, encoding="utf-8")
+    tmp.write_bytes(raw)
     tmp.replace(path)
     with _lock:
         _memory[key] = data
+        _raw_memory[key] = raw
     return data
 
 
@@ -85,8 +102,11 @@ def clear(code: str | None = None, timeframe: str = "1d") -> None:
     with _lock:
         if code is None:
             _memory.clear()
+            _raw_memory.clear()
             return
-        _memory.pop(make_key(code, timeframe), None)
+        key = make_key(code, timeframe)
+        _memory.pop(key, None)
+        _raw_memory.pop(key, None)
 
 
 def list_codes(timeframe: str = "1d") -> list[str]:
