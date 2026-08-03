@@ -19,7 +19,7 @@ from . import main as legacy
 
 log = logging.getLogger("ryan.chart_service")
 _SH_TZ = ZoneInfo("Asia/Shanghai")
-_BUNDLE_VERSION = "bundle_v5"
+_BUNDLE_VERSION = "bundle_v6"
 # 前端实际使用的指标；EMA20/EMA60常驻主图。
 _BUNDLE_INDICATOR_COLS = (
     "MA5", "MA10", "MA20", "MA60",
