@@ -1,7 +1,7 @@
-"""机构级斐波那契位置提示。
+"""大级别斐波那契位置提示。
 
-仅跟踪右侧确认后的主要波段；价格触达重要回撤位且当根出现支撑/压力反应时，
-保留一个中性位置标签。主图不绘制斐波那契横线、区域或折线。
+只基于15%级别ZigZag主要波段计算；价格触达重要回撤位并出现支撑/压力反应时，
+主图仅显示精确比例标签（0.382/0.5/0.618/0.786），不绘制横线、区域或折线。
 """
 from __future__ import annotations
 
@@ -11,14 +11,15 @@ import pandas as pd
 from . import pivots as piv_mod
 
 RATIOS = (0.382, 0.5, 0.618, 0.786)
-MIN_SWING_PCT = 0.10
-MIN_SWING_ATR = 4.0
-MIN_SWING_BARS = 12
-MAX_TRACK_BARS = 90
+MAJOR_ZZ_PCT = 0.15
+MIN_SWING_PCT = 0.15
+MIN_SWING_ATR = 6.0
+MIN_SWING_BARS = 25
+MAX_TRACK_BARS = 120
 TOUCH_TOL = 0.004
-DEDUP_BARS = 15
+DEDUP_BARS = 20
 
-_RATIO_SCORE = {0.382: 50, 0.5: 54, 0.618: 58, 0.786: 52}
+_RATIO_SCORE = {0.382: 52, 0.5: 56, 0.618: 62, 0.786: 54}
 
 
 def _date(df: pd.DataFrame, idx: int) -> str:
@@ -33,18 +34,18 @@ def _touch_event(df: pd.DataFrame, idx: int, ratio: float, level: float,
         "bar_idx": int(idx),
         "price": round(float(level), 4),
         "kind": "fibonacci",
-        "label": f"Fib{ratio:g}",
-        # Fib是位置工具而非独立买卖信号，使用中性标记，避免“看多/看跌”误导。
+        # 直接显示完整比例，避免统一短标签截断成0.61或0.78。
+        "label": f"{ratio:g}",
         "direction": "range",
         "star": False,
         "detail": (
-            f"{_date(df, idx)} 价格触及已确认主要波段的{ratio:g}回撤位"
-            f"{level:.2f}（{role}）；当根出现价格反应，但仍需结合趋势与结构。"
+            f"{_date(df, idx)} 价格触及大级别已确认波段的{ratio:g}回撤位"
+            f"{level:.2f}（{role}）；该位置只作结构参考，不单独构成买卖信号。"
         ),
         "lines": [],
         "zones": [],
         "polylines": [],
-        "active": idx >= len(df) - 80,
+        "active": idx >= len(df) - 100,
         "_score": _RATIO_SCORE.get(ratio, 50),
         "_grp": f"fib:{swing_start}:{swing_end}:{ratio}",
         "_amp": round(float(amplitude), 4),
@@ -52,7 +53,8 @@ def _touch_event(df: pd.DataFrame, idx: int, ratio: float, level: float,
 
 
 def find_fibonacci_touches(df: pd.DataFrame, pivots: pd.DataFrame) -> list[dict]:
-    zz = piv_mod.alternating(pivots).reset_index(drop=True)
+    del pivots  # 大级别Fib统一使用15% ZigZag，避免小pivot重复计算。
+    zz = piv_mod.zigzag(df, min_pct=MAJOR_ZZ_PCT).reset_index(drop=True)
     if len(zz) < 2:
         return []
 
@@ -86,8 +88,6 @@ def find_fibonacci_touches(df: pd.DataFrame, pivots: pd.DataFrame) -> list[dict]
             r: (hi - r * amplitude if up_swing else lo + r * amplitude)
             for r in RATIOS
         }
-
-        # 波段端点在 confirmed_at_idx 才可知，任何提示都必须发生在此之后。
         start = max(int(b["confirmed_at_idx"]), ib + 1)
         stop = min(len(df), start + MAX_TRACK_BARS)
         hit: set[float] = set()
@@ -97,13 +97,11 @@ def find_fibonacci_touches(df: pd.DataFrame, pivots: pd.DataFrame) -> list[dict]
                 break
             if not up_swing and low[i] < lo * 0.98:
                 break
-
             for ratio, level in levels.items():
                 if ratio in hit or level <= 0:
                     continue
                 traded = low[i] <= level <= high[i]
                 near_close = abs(close[i] / level - 1.0) <= TOUCH_TOL
-                # 仅“穿过”价位不够：上涨腿回撤需收回位上，下跌腿反弹需收回位下。
                 reaction = (
                     traded and close[i] >= level if up_swing
                     else traded and close[i] <= level
@@ -115,7 +113,6 @@ def find_fibonacci_touches(df: pd.DataFrame, pivots: pd.DataFrame) -> list[dict]
                 ))
                 hit.add(ratio)
 
-    # 重叠波段经常在同一根附近给出重复Fib标签；同一比例仅保留振幅更大的主波段。
     candidates.sort(key=lambda e: (e["bar_idx"], e["label"], -e["_amp"]))
     out: list[dict] = []
     for event in candidates:
