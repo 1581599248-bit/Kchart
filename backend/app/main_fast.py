@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
@@ -25,23 +26,35 @@ async def _ts_api_error_handler(request, exc):
     return JSONResponse({"detail": str(exc)}, status_code=503)
 
 
+def _serve_chart(response: Response, ts_code: str, timeframe: str, refresh: int):
+    if timeframe != "1d":
+        raise HTTPException(400, "高速统一接口当前仅支持日线")
+    started = time.perf_counter()
+    try:
+        result = chart_service.get(ts_code, timeframe, bool(refresh))
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    meta = result.get("meta") or {}
+    state = "refreshing" if meta.get("refreshing") else "hit" if meta.get("cache_hit") else "miss"
+    response.headers["Server-Timing"] = f"chart;dur={elapsed_ms:.1f}"
+    response.headers["X-Chart-Cache"] = state
+    return result
+
+
 @app.get("/api/chart")
 def api_chart(
+    response: Response,
     ts_code: str = Query(..., min_length=6),
     timeframe: str = "1d",
     refresh: int = 0,
 ):
-    if timeframe != "1d":
-        raise HTTPException(400, "高速统一接口当前仅支持日线")
-    try:
-        return chart_service.get(ts_code, timeframe, bool(refresh))
-    except ValueError as exc:
-        raise HTTPException(404, str(exc)) from exc
+    return _serve_chart(response, ts_code, timeframe, refresh)
 
 
 @app.get("/api/chart/{ts_code}")
-def api_chart_path(ts_code: str, refresh: int = 0):
-    return api_chart(ts_code=ts_code, timeframe="1d", refresh=refresh)
+def api_chart_path(response: Response, ts_code: str, refresh: int = 0):
+    return _serve_chart(response, ts_code, "1d", refresh)
 
 
 # 旧 API 与静态前端继续由原应用提供。
