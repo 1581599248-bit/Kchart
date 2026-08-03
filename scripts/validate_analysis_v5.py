@@ -1,4 +1,7 @@
-"""推背图v5机构级信号验收：不依赖行情API。"""
+"""推背图v5基础指标信号验收：不依赖行情API。
+
+大级别结构、Fib、波浪和顶部形态由validate_analysis_v7.py单独验收。
+"""
 from __future__ import annotations
 
 import sys
@@ -11,7 +14,7 @@ if str(ROOT) not in sys.path:
 import numpy as np
 import pandas as pd
 
-from backend.app import analysis_v5, fibonacci_history, indicators, signals_v5
+from backend.app import analysis_v5, indicators, signals_v5
 
 
 def market_frame(n: int = 760) -> pd.DataFrame:
@@ -46,14 +49,12 @@ def validate_rsi_requires_price_confirmation() -> None:
     df["RSI6"] = 50.0
     df["ADX"] = 15.0
 
-    # 超买：先上穿80，不应立即出信号；跌回72下方且失守MA10后才确认。
     df.loc[39, "RSI6"], df.loc[40, "RSI6"] = 79.0, 82.0
     df.loc[41, "RSI6"], df.loc[42, "RSI6"] = 86.0, 78.0
     df.loc[43, "RSI6"] = 70.0
     df.loc[42, "close"] = float(df.loc[42, "MA10"]) + 1.0
     df.loc[43, "close"] = float(df.loc[43, "MA10"]) - 1.0
 
-    # 超卖：先下穿20，不应立即出信号；回升28上方且站回MA10后才确认。
     df.loc[79, "RSI6"], df.loc[80, "RSI6"] = 21.0, 18.0
     df.loc[81, "RSI6"], df.loc[82, "RSI6"] = 14.0, 23.0
     df.loc[83, "RSI6"] = 30.0
@@ -88,7 +89,6 @@ def _manual_signal_frame(n: int = 100) -> pd.DataFrame:
 
 def validate_ema_filters_chop_and_confirms_trend() -> None:
     chop = _manual_signal_frame()
-    # 高频蹭线，但ADX、斜率和均线张口均不满足，必须全部过滤。
     chop["EMA20"] = 100 + 0.01 * np.sin(np.arange(len(chop)) * 1.8)
     assert signals_v5.ema_cross_signals(chop) == []
 
@@ -119,34 +119,7 @@ def validate_noise_suppression() -> None:
     })
     df = indicators.compute_all(frame)
     events = signals_v5.all_signals(df)
-    # 低波动横盘里原始交叉很多，但机构级过滤后主信号应接近为空。
     assert len(events) <= 4, [(e["bar_idx"], e["label"]) for e in events]
-
-
-def validate_fibonacci_confirmation() -> None:
-    n = 80
-    close = np.full(n, 100.0)
-    close[:11] = np.linspace(110, 100, 11)
-    close[10:31] = np.linspace(100, 140, 21)
-    close[31:46] = np.linspace(140, 115.3, 15)
-    close[46:] = 118
-    df = pd.DataFrame({
-        "trade_date": pd.date_range("2024-01-01", periods=n, freq="B"),
-        "open": close, "high": close + 0.6, "low": close - 0.6,
-        "close": close, "vol": 1_000_000.0, "amount": 1e7,
-        "ATR14": np.full(n, 2.0),
-    })
-    pivots = pd.DataFrame([
-        (10, df.loc[10, "trade_date"], 100.0, "L", 15),
-        (30, df.loc[30, "trade_date"], 140.0, "H", 35),
-    ], columns=["idx", "trade_date", "price", "kind", "confirmed_at_idx"])
-    events = fibonacci_history.find_fibonacci_touches(df, pivots)
-    fib618 = [e for e in events if e["label"] == "Fib0.618"]
-    assert fib618 and fib618[0]["bar_idx"] >= 35, fib618
-    assert all(e["direction"] == "range" for e in events), events
-    assert all(not e.get("lines") for e in events), events
-    assert all(not e.get("zones") for e in events), events
-    assert all(not e.get("polylines") for e in events), events
 
 
 def validate_full_analysis() -> None:
@@ -171,6 +144,5 @@ if __name__ == "__main__":
     validate_rsi_requires_price_confirmation()
     validate_ema_filters_chop_and_confirms_trend()
     validate_noise_suppression()
-    validate_fibonacci_confirmation()
     validate_full_analysis()
-    print("analysis_v5 institutional signal validation OK")
+    print("analysis_v5 base signal validation OK")
