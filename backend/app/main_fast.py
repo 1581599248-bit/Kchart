@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import ORJSONResponse, Response
 
-from . import chart_cache, chart_service, config, main as legacy, results_db, updater
+from . import chart_cache, chart_service_v7 as chart_service, config, main as legacy, results_db, updater
 from .ts_api import TsApiError
 
 log = logging.getLogger("ryan.main_fast")
@@ -22,7 +22,6 @@ app = FastAPI(
     version=config.MODEL_VERSION,
     default_response_class=ORJSONResponse,
 )
-# 默认最高压缩级别会增加CPU等待；4级在网页JSON上压缩率接近、响应更快。
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=4)
 
 
@@ -50,13 +49,10 @@ def _serve_chart(ts_code: str, timeframe: str, refresh: int):
         "X-Chart-Cache": state,
     }
 
-    # 正常完成的 bundle 无需动态改写主体；首次构建和热命中都直接返回缓存字节。
     if not refreshing:
         raw = chart_cache.get_raw(ts_code, timeframe)
         if raw is not None:
             return Response(content=raw, media_type="application/json", headers=headers)
-
-    # 只有 stale-while-revalidate 需要在响应体里临时标记 refreshing=true。
     return ORJSONResponse(content=result, headers=headers)
 
 
@@ -74,7 +70,6 @@ def api_chart_path(ts_code: str, refresh: int = 0):
     return _serve_chart(ts_code, "1d", refresh)
 
 
-# 旧 API 与静态前端继续由原应用提供。
 app.mount("/", legacy.app)
 
 
@@ -82,7 +77,6 @@ def _startup() -> None:
     results_db.get_con().close()
     log.info("高速入口启动：model=%s | TS_URL=%s", config.MODEL_VERSION, config.TS_URL)
     updater.start(chart_service.refresh_many)
-    # 只预热固定指数；不根据用户搜索行为提前请求任何个股。
     threading.Thread(
         target=chart_service.refresh_many,
         args=(list(config.BROAD_INDEX_CODES), "1d"),
