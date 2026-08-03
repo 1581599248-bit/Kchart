@@ -1,0 +1,31 @@
+name: Kchart Smoke Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Python syntax
+        run: python -m compileall -q backend scripts
+      - name: Fast entry import
+        run: |
+          python - <<'PY'
+          from backend.app.main_fast import app
+          paths = {getattr(r, 'path', '') for r in app.routes}
+          assert '/api/chart' in paths, paths
+          print('main_fast import and /api/chart route OK')
+          PY
+      - name: Frontend syntax
+        run: |
+          node --check frontend/js/api.js
+          node --check frontend/js/fast_bundle.js
