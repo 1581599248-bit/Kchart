@@ -131,12 +131,13 @@ jobs:
         run: |
           grep -q 'moving_average_controls.js' frontend/index.html
           grep -q 'moving_average_controls.css' frontend/index.html
-          grep -q "ryan:kline:moving-averages:v1" frontend/js/moving_average_controls.js
-          grep -q 'data-moving-average' frontend/js/moving_average_controls.js
+          grep -q "ryan:kline:moving-average-groups:v2" frontend/js/moving_average_controls.js
+          grep -q 'data-moving-average-group' frontend/js/moving_average_controls.js
           grep -q 'board.mini ? \[\] : loadEnabled()' frontend/js/moving_average_controls.js
-          for label in MA5 MA10 MA20 MA60 EMA20 EMA60; do
-            grep -q "label: '$label'" frontend/js/moving_average_controls.js
-          done
+          grep -q "{ key: 'ma', label: 'MA', series: \['ma5', 'ma10', 'ma20', 'ma60'\] }" frontend/js/moving_average_controls.js
+          grep -q "{ key: 'ema', label: 'EMA', series: \['ema20', 'ema60'\] }" frontend/js/moving_average_controls.js
+          test "$(grep -c "label: 'MA'" frontend/js/moving_average_controls.js)" -eq 1
+          test "$(grep -c "label: 'EMA'" frontend/js/moving_average_controls.js)" -eq 1
       - name: Unified render path assertions
         run: |
           grep -q 'SignalQuality.filterAnnotations' frontend/js/fast_bundle.js
