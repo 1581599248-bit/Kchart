@@ -25,6 +25,91 @@ jobs:
           assert '/api/chart' in paths, paths
           print('main_fast import and /api/chart route OK')
           PY
+      - name: Performance refactor equivalence
+        run: |
+          python - <<'PY'
+          import numpy as np
+          import pandas as pd
+          from pandas.testing import assert_frame_equal
+          from backend.app import divergence, indicators, pivots
+
+          rng = np.random.default_rng(20260803)
+          n = 900
+          close = 100 + np.cumsum(rng.normal(0, 1, n))
+          df = pd.DataFrame({
+              'trade_date': pd.date_range('2022-01-01', periods=n, freq='D'),
+              'open': close + rng.normal(0, .4, n),
+              'high': close + rng.uniform(.1, 2, n),
+              'low': close - rng.uniform(.1, 2, n),
+              'close': close,
+              'vol': rng.integers(1000, 100000, n).astype(float),
+              'amount': rng.uniform(1e4, 1e7, n),
+          })
+
+          # 新 compute_all 与原逐函数串联结果一致。
+          ref_ind = indicators.add_ma(df)
+          ref_ind = indicators.add_ema(ref_ind)
+          ref_ind = indicators.add_macd(ref_ind)
+          ref_ind = indicators.add_kdj(ref_ind)
+          ref_ind = indicators.add_rsi(ref_ind)
+          ref_ind = indicators.add_wr(ref_ind)
+          ref_ind = indicators.add_boll(ref_ind)
+          ref_ind = indicators.add_atr(ref_ind)
+          ref_ind = indicators.add_obv(ref_ind)
+          ref_ind = indicators.add_adx(ref_ind)
+          ref_ind = indicators.add_roc(ref_ind)
+          new_ind = indicators.compute_all(df)
+          assert_frame_equal(new_ind, ref_ind, check_exact=False, rtol=1e-12, atol=1e-12)
+
+          def ref_pivots(frame, left=5, right=5):
+              highs = frame['high'].to_numpy(float)
+              lows = frame['low'].to_numpy(float)
+              dates = frame['trade_date'].to_numpy()
+              rows = []
+              for i in range(left, len(frame) - right):
+                  hw = highs[i-left:i+right+1]
+                  if highs[i] == hw.max() and int(np.argmax(hw)) == left:
+                      rows.append((i, dates[i], float(highs[i]), 'H', i + right))
+                      continue
+                  lw = lows[i-left:i+right+1]
+                  if lows[i] == lw.min() and int(np.argmin(lw)) == left:
+                      rows.append((i, dates[i], float(lows[i]), 'L', i + right))
+              out = pd.DataFrame(rows, columns=['idx','trade_date','price','kind','confirmed_at_idx'])
+              if len(out):
+                  out['idx'] = out['idx'].astype(int)
+                  out['confirmed_at_idx'] = out['confirmed_at_idx'].astype(int)
+              return out
+
+          ref_p = ref_pivots(new_ind)
+          new_p = pivots.find_pivots(new_ind)
+          assert_frame_equal(new_p.reset_index(drop=True), ref_p.reset_index(drop=True), check_dtype=False)
+
+          def ref_series(series, left, right):
+              values = series.to_numpy(float)
+              tops, bots = [], []
+              for i in range(left, len(values) - right):
+                  if np.isnan(values[i]):
+                      continue
+                  window = values[i-left:i+right+1]
+                  if np.isnan(window).any():
+                      continue
+                  if values[i] == window.max() and int(np.argmax(window)) == left:
+                      tops.append(i)
+                  elif values[i] == window.min() and int(np.argmin(window)) == left:
+                      bots.append(i)
+              return tops, bots
+
+          assert divergence._series_pivots(new_ind['close'], 3, 3) == ref_series(new_ind['close'], 3, 3)
+          # 三个指标调用后应只产生一套价格pivot缓存。
+          for col in ('DIF', 'DEA', 'RSI6'):
+              divergence.find_divergences(new_ind, col)
+          assert len(new_ind.attrs.get('_ryan_div_price_pivots', {})) == 1
+
+          ms = pivots.multi_scale_zigzag(new_ind)
+          assert set(ms) == {'small', 'trade', 'background'}
+          assert len(new_ind.attrs.get('_ryan_pivot_cache', {})) == 1
+          print('indicator/pivot/divergence equivalence OK')
+          PY
       - name: Frontend syntax
         run: |
           node --check frontend/js/api.js
