@@ -5,9 +5,10 @@
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
+import math
 import threading
-from pathlib import Path
 from time import time
 
 from . import config
@@ -23,9 +24,27 @@ def make_key(code: str, timeframe: str = "1d") -> str:
     return f"{code.upper()}@{timeframe}"
 
 
-def _path(key: str) -> Path:
+def _path(key: str):
     safe = key.replace(".", "_").replace("@", "__").replace("/", "_")
     return CACHE_DIR / f"{safe}.json"
+
+
+def _clean(value):
+    """将 numpy 标量、NaN 与日期递归转换为标准 JSON 类型。"""
+    if isinstance(value, dict):
+        return {str(k): _clean(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_clean(v) for v in value]
+    if isinstance(value, (dt.date, dt.datetime)):
+        return value.isoformat()
+    if hasattr(value, "item"):
+        try:
+            return _clean(value.item())
+        except (TypeError, ValueError):
+            pass
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    return value
 
 
 def get(code: str, timeframe: str = "1d") -> dict | None:
@@ -50,7 +69,7 @@ def get(code: str, timeframe: str = "1d") -> dict | None:
 
 def save(code: str, timeframe: str, payload: dict) -> dict:
     key = make_key(code, timeframe)
-    data = dict(payload)
+    data = _clean(dict(payload))
     data["cached_at"] = int(time())
     path = _path(key)
     tmp = path.with_suffix(".json.tmp")
@@ -76,7 +95,9 @@ def list_codes(timeframe: str = "1d") -> list[str]:
     out = []
     for path in CACHE_DIR.glob(f"*{suffix}"):
         stem = path.name[: -len(suffix)]
-        out.append(stem.replace("_SH", ".SH").replace("_SZ", ".SZ").replace("_CSI", ".CSI"))
+        for market in ("SH", "SZ", "BJ", "CSI", "HK"):
+            stem = stem.replace(f"_{market}", f".{market}")
+        out.append(stem)
     with _lock:
         for key in _memory:
             code, tf = key.rsplit("@", 1)
