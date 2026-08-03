@@ -9,6 +9,7 @@ data/*.duckdb
 data/*.duckdb.wal
 data/cache/
 data/api_cache/
+data/chart_cache/
 
 # 日志
 logs/
