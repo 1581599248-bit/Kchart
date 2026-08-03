@@ -1,0 +1,16 @@
+/* 均线指标开关：与现有指标栏同排，默认不占用主图空间。 */
+.ma-control-title {
+  color: var(--text);
+  font-weight: 600;
+  margin-right: 1px;
+}
+.ma-control-divider {
+  display: inline-block;
+  width: 1px;
+  height: 14px;
+  margin: 0 2px;
+  background: var(--border);
+}
+@media (max-width: 640px) {
+  .ma-control-divider { height: 12px; }
+}
