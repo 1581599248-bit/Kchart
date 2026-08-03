@@ -29,10 +29,21 @@
     const slot = view.board.el.querySelector('.analysis-slot');
     try {
       view.data = data || {};
-      view.annotations = (view.data.annotations || []).map(a => view._normalize(a)).filter(a => a.time != null);
+      view.annotations = (view.data.annotations || [])
+        .map(a => view._normalize(a))
+        .filter(a => a.time != null);
       view._barByTime = new Map(view.board.bars.map(b => [b.time, b]));
+
+      // 单请求路径也必须执行主图质量门控；此前这里绕过了signal_quality.js。
+      if (window.SignalQuality && window.SignalQuality.filterAnnotations) {
+        view.annotations = window.SignalQuality.filterAnnotations(view, view.annotations);
+      }
+
       view._applyMarkers();
       if (view.showSummary) view._renderSummary(view.data.summary || {});
+      if (window.HistoryStructureLabels && window.HistoryStructureLabels.refresh) {
+        window.HistoryStructureLabels.refresh(view);
+      }
       view._requestRedraw();
     } catch (e) {
       if (view.showSummary) slot.innerHTML = `<div class="analysis-card dim">分析暂不可用：${e.message}</div>`;
@@ -58,7 +69,6 @@
         try {
           bundle = await window.API.chart(this.tsCode, this.timeframe, false);
         } catch (e) {
-          // Render 尚未切换到 main_fast 时保证页面仍可用；部署完成后自动走高速接口。
           if (!String(e.message || '').includes('404')) throw e;
           bundle = await legacyBundle(this.tsCode, this.timeframe);
         }
