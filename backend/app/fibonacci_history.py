@@ -1,7 +1,7 @@
 """全历史斐波那契重要位触达。
 
 每个波段端点必须先完成右侧确认，之后才开始观察0.382/0.5/0.618/0.786。
-只在价格真实进入该价位附近时标注；不把任意斐波那契线机械铺满全图。
+只在价格真实进入该价位附近时标注；主图仅显示标签和箭头，不绘制斐波那契横线或区域。
 """
 from __future__ import annotations
 
@@ -34,11 +34,8 @@ def _touch_event(df: pd.DataFrame, idx: int, ratio: float, level: float,
             f"{_date(df, idx)} 价格触及已确认波段的{ratio:g}回撤位{level:.2f}；"
             "斐波那契仅作为位置参考，不单独构成方向判断。"
         ),
-        "lines": [{
-            "t1": _date(df, swing_end), "p1": round(float(level), 4),
-            "t2": _date(df, idx), "p2": round(float(level), 4),
-            "style": "dashed",
-        }],
+        # 斐波那契只保留标签/箭头；禁止在K线主图绘制横线、色带或折线。
+        "lines": [],
         "zones": [],
         "polylines": [],
         "active": idx >= len(df) - 80,
