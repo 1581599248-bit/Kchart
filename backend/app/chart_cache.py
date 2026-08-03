@@ -65,7 +65,7 @@ def get(code: str, timeframe: str = "1d") -> dict | None:
 
 
 def get_raw(code: str, timeframe: str = "1d") -> bytes | None:
-    """读取已经编码好的 JSON；供热缓存接口直接返回。"""
+    """读取已经编码好的 JSON；供图表接口直接返回。"""
     key = make_key(code, timeframe)
     with _lock:
         raw = _raw_memory.get(key)
@@ -85,9 +85,11 @@ def get_raw(code: str, timeframe: str = "1d") -> bytes | None:
 
 def save(code: str, timeframe: str, payload: dict) -> dict:
     key = make_key(code, timeframe)
-    data = dict(payload)
-    data["cached_at"] = int(time())
-    raw = orjson.dumps(data, option=_JSON_OPTIONS, default=_default)
+    serializable = dict(payload)
+    serializable["cached_at"] = int(time())
+    raw = orjson.dumps(serializable, option=_JSON_OPTIONS, default=_default)
+    # 内存对象直接由最终JSON反解，保证后续动态响应中不存在 pandas/numpy 特殊类型。
+    data = orjson.loads(raw)
     path = _path(key)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_bytes(raw)
