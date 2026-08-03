@@ -1,0 +1,22 @@
+name: Live Pattern Probe
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/**'
+      - 'scripts/live_pattern_probe_v11.py'
+      - '.github/workflows/live-pattern-probe.yml'
+
+jobs:
+  shanghai-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Probe real Shanghai Composite bars
+        run: python scripts/live_pattern_probe_v11.py
