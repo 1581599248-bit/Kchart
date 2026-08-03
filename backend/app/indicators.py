@@ -141,18 +141,92 @@ def add_roc(df: pd.DataFrame, periods=(20, 60)) -> pd.DataFrame:
 
 
 def compute_all(df: pd.DataFrame) -> pd.DataFrame:
-    """一次算全所有指标，返回追加指标列后的副本。"""
-    out = add_ma(df)
-    out = add_ema(out)
-    out = add_macd(out)
-    out = add_kdj(out)
-    out = add_rsi(out)
-    out = add_wr(out)
-    out = add_boll(out)
-    out = add_atr(out)
-    out = add_obv(out)
-    out = add_adx(out)
-    out = add_roc(out)
+    """一次复制、原地追加全部指标；计算口径与各 add_* 函数完全一致。
+
+    原实现串联十个 add_*，每一步都会复制整张 DataFrame。这里保留所有公式与参数，
+    但只复制一次，显著减少搜索个股时的内存分配和CPU耗时。
+    """
+    out = df.copy()
+    close = out["close"]
+    high = out["high"]
+    low = out["low"]
+
+    # MA
+    for p in (5, 10, 20, 60, 120, 250):
+        out[f"MA{p}"] = close.rolling(p, min_periods=p).mean()
+
+    # EMA
+    for p in (12, 20, 26, 50, 60):
+        out[f"EMA{p}"] = close.ewm(span=p, adjust=False).mean()
+
+    # MACD
+    dif = close.ewm(span=12, adjust=False).mean() - close.ewm(span=26, adjust=False).mean()
+    dea = dif.ewm(span=9, adjust=False).mean()
+    out["DIF"] = dif
+    out["DEA"] = dea
+    out["MACD_HIST"] = 2 * (dif - dea)
+
+    # KDJ
+    low_n = low.rolling(9, min_periods=1).min()
+    high_n = high.rolling(9, min_periods=1).max()
+    rsv = (close - low_n) / (high_n - low_n).replace(0, np.nan) * 100
+    k = rsv.ewm(alpha=1 / 3, adjust=False).mean()
+    d = k.ewm(alpha=1 / 3, adjust=False).mean()
+    out["K"] = k
+    out["D"] = d
+    out["J"] = 3 * k - 2 * d
+
+    # RSI
+    diff = close.diff()
+    up = diff.clip(lower=0)
+    dn = (-diff).clip(lower=0)
+    for p in (6, 12, 24):
+        au = up.ewm(alpha=1 / p, adjust=False).mean()
+        ad = dn.ewm(alpha=1 / p, adjust=False).mean()
+        rs = au / ad.replace(0, np.nan)
+        out[f"RSI{p}"] = 100 - 100 / (1 + rs)
+
+    # WR
+    for p in (6, 10):
+        hh = high.rolling(p, min_periods=p).max()
+        ll = low.rolling(p, min_periods=p).min()
+        out[f"WR{p}"] = (hh - close) / (hh - ll).replace(0, np.nan) * -100
+
+    # BOLL
+    boll_mid = close.rolling(20, min_periods=20).mean()
+    boll_std = close.rolling(20, min_periods=20).std(ddof=0)
+    out["BOLL_MID"] = boll_mid
+    out["BOLL_UP"] = boll_mid + 2 * boll_std
+    out["BOLL_DN"] = boll_mid - 2 * boll_std
+
+    # ATR + ADX 共用真实波幅，避免重复构造临时表
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()],
+        axis=1,
+    ).max(axis=1)
+    atr = tr.ewm(alpha=1 / 14, adjust=False).mean()
+    out["ATR14"] = atr
+
+    # OBV
+    direction = np.sign(close.diff()).fillna(0)
+    out["OBV"] = (direction * out["vol"]).cumsum()
+
+    # ADX
+    up_move = high.diff()
+    down_move = -low.diff()
+    pdm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    mdm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+    pdi = 100 * pd.Series(pdm, index=out.index).ewm(alpha=1 / 14, adjust=False).mean() / atr
+    mdi = 100 * pd.Series(mdm, index=out.index).ewm(alpha=1 / 14, adjust=False).mean() / atr
+    dx = 100 * (pdi - mdi).abs() / (pdi + mdi).replace(0, np.nan)
+    out["PDI"] = pdi
+    out["MDI"] = mdi
+    out["ADX"] = dx.ewm(alpha=1 / 14, adjust=False).mean()
+
+    # ROC
+    out["ROC20"] = close.pct_change(20) * 100
+    out["ROC60"] = close.pct_change(60) * 100
     return out
 
 
