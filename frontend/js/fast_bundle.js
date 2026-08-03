@@ -15,6 +15,15 @@
     return cols;
   }
 
+  async function legacyBundle(code, timeframe) {
+    const [barsResp, indRaw, analysis] = await Promise.all([
+      window.API.bars(code, timeframe),
+      window.API.indicators(code, timeframe),
+      window.API.analysis(code, timeframe, false),
+    ]);
+    return Object.assign({}, barsResp, { indicators: indRaw, analysis });
+  }
+
   function renderAnalysis(view, data) {
     if (!view) return;
     const slot = view.board.el.querySelector('.analysis-slot');
@@ -46,14 +55,15 @@
     try {
       let bundle;
       if (window.API.chart) {
-        bundle = await window.API.chart(this.tsCode, this.timeframe, false);
+        try {
+          bundle = await window.API.chart(this.tsCode, this.timeframe, false);
+        } catch (e) {
+          // Render 尚未切换到 main_fast 时保证页面仍可用；部署完成后自动走高速接口。
+          if (!String(e.message || '').includes('404')) throw e;
+          bundle = await legacyBundle(this.tsCode, this.timeframe);
+        }
       } else {
-        const [barsResp, indRaw, analysis] = await Promise.all([
-          window.API.bars(this.tsCode, this.timeframe),
-          window.API.indicators(this.tsCode, this.timeframe),
-          window.API.analysis(this.tsCode, this.timeframe, false),
-        ]);
-        bundle = Object.assign({}, barsResp, { indicators: indRaw, analysis });
+        bundle = await legacyBundle(this.tsCode, this.timeframe);
       }
       if (requestId !== this._bundleRequestId) return;
       this.name = bundle.name || this.tsCode;
@@ -72,7 +82,6 @@
       renderAnalysis(this.analysisView, bundle.analysis);
       this._afterData();
 
-      // 缓存过期时后端已后台刷新；数秒后静默取一次新结果，不阻塞首屏。
       if (bundle.meta && bundle.meta.refreshing) {
         setTimeout(async () => {
           try {
