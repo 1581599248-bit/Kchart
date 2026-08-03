@@ -9,19 +9,25 @@ from . import patterns as base_patterns
 from . import patterns_ext
 from . import pivots as piv_mod
 from . import signals_v7
+from . import strict_tops_v7
 from . import structures_v7
 from . import waves_v7
 
 ANALYSIS_VERSION = "analysis_v7.0"
 
 _OLD_WAVE_KINDS = {"wave_up5", "wave_down_abc", "wave_up_abc", "wave_down5"}
+_REPLACED_TOP_KINDS = {"double_top", "head_shoulders_top"}
 
 
 def _strict_patterns(df, pivots, timeframe: str) -> list[dict]:
     original = base_patterns.find_patterns(
         df, pivots, asof_bar=len(df) - 1, timeframe=timeframe
     )
-    original = [e for e in original if str(e.get("kind")) not in _OLD_WAVE_KINDS]
+    # 旧波浪、旧M顶、旧头肩顶和旧五点扩散结构全部退出v7主链。
+    original = [
+        e for e in original
+        if str(e.get("kind")) not in (_OLD_WAVE_KINDS | _REPLACED_TOP_KINDS)
+    ]
     extra = [
         e for e in patterns_ext.find_patterns_ext(df, pivots, timeframe=timeframe)
         if str(e.get("kind")) != "broadening_triangle"
@@ -29,6 +35,7 @@ def _strict_patterns(df, pivots, timeframe: str) -> list[dict]:
     return base._dedupe_patterns(
         original
         + extra
+        + strict_tops_v7.find_strict_top_patterns(df, pivots)
         + waves_v7.find_waves(df)
         + structures_v7.find_broadening_breaks(df, pivots)
     )
