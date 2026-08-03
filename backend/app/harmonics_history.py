@@ -1,39 +1,50 @@
-"""全历史谐波XABCD与PRZ生命周期。
+"""原版谐波展示适配器。
 
-完成D点必须右侧确认；进入PRZ只表示潜在反转区。随后只有价格按预期离开PRZ
-才标“谐波确认”，向反方向穿透PRZ则标“谐波失效”。
+恢复此前简洁口径：
+- 已完成谐波只在 D 点标注；
+- 现价进入 PRZ 时单独提示并显示原版金色区域；
+- 不再额外输出“谐波确认 / 谐波失效 / 潜在PRZ”生命周期标签。
+
+底层识别仍直接使用 harmonics.py 的原始 XABCD 比率与右侧确认规则。
 """
 from __future__ import annotations
 
 import pandas as pd
 
 from . import harmonics as base
-from . import pivots as piv_mod
 
-REVERSAL_CONFIRM = 0.025
-FAIL_BUFFER = 0.02
-FOLLOW_BARS = 15
+RECENT_D_STAR_BARS = 40
+
+_SHORT_NAME = {
+    "Gartley": "加特利",
+    "Bat": "蝙蝠",
+    "Butterfly": "蝴蝶",
+    "Crab": "螃蟹",
+    "Shark": "鲨鱼",
+}
 
 
 def _date(df: pd.DataFrame, idx: int) -> str:
     return str(df["trade_date"].iloc[int(idx)])[:10]
 
 
-def _zone(df: pd.DataFrame, start: int, end: int, lo: float, hi: float,
-          direction: str) -> dict:
-    return {
-        "t1": _date(df, start),
-        "t2": _date(df, min(end, len(df) - 1)),
-        "top": round(float(max(lo, hi)), 4),
-        "bottom": round(float(min(lo, hi)), 4),
-        "color": "rgba(239,83,80,.10)" if direction == "bear" else "rgba(38,166,154,.10)",
-    }
+def _name(name: str) -> str:
+    return _SHORT_NAME.get(str(name), str(name))
+
+
+def _zone(df: pd.DataFrame, event: dict, lo: float, hi: float) -> list[dict]:
+    return [{
+        "t1": _date(df, int(event["x"]["idx"])),
+        "t2": _date(df, len(df) - 1),
+        "top": float(hi),
+        "bottom": float(lo),
+        "color": "rgba(240,185,11,0.08)",
+    }]
 
 
 def _annotation(df: pd.DataFrame, idx: int, price: float, label: str,
                 direction: str, detail: str, score: int,
-                zones: list | None = None, polylines: list | None = None,
-                star: bool = False) -> dict:
+                zones: list[dict], star: bool) -> dict:
     return {
         "bar_idx": int(idx),
         "price": round(float(price), 4),
@@ -43,134 +54,60 @@ def _annotation(df: pd.DataFrame, idx: int, price: float, label: str,
         "star": bool(star),
         "detail": detail,
         "lines": [],
-        "zones": zones or [],
-        "polylines": polylines or [],
-        "active": idx >= len(df) - 120,
+        "zones": zones,
+        "polylines": [],
+        "active": True,
         "_score": int(score),
         "_grp": f"harmonic:{label}:{idx}",
     }
 
 
-def _polyline(df: pd.DataFrame, pts: list[dict]) -> list[dict]:
-    return [{
-        "points": [
-            {"t": _date(df, int(p["idx"])), "p": round(float(p["price"]), 4)}
-            for p in pts
-        ],
-        "style": "solid",
-    }]
-
-
-def _completed_windows(df: pd.DataFrame, pivots: pd.DataFrame) -> list[dict]:
-    ap = piv_mod.alternating(pivots).to_dict("records")
-    if len(ap) < 5:
-        return []
-    close = df["close"].to_numpy(dtype=float)
-    high = df["high"].to_numpy(dtype=float)
-    low = df["low"].to_numpy(dtype=float)
-    out: list[dict] = []
-    used: list[tuple[int, str]] = []
-
-    for end in range(4, len(ap)):
-        pts = ap[end - 4:end + 1]
-        ratios = base._ratios(pts)
-        if ratios is None:
-            continue
-        match = base._match(ratios)
-        if match is None:
-            continue
-        name, d_ratio, ref = match
-        d = pts[4]
-        d_confirm = int(d["confirmed_at_idx"])
-        if d_confirm >= len(df):
-            continue
-        # 避免同一区域同方向重复命名多个近似谐波。
-        direction = "bull" if ratios["bullish"] else "bear"
-        if any(abs(d_confirm - old_idx) <= 8 and direction == old_dir for old_idx, old_dir in used):
-            continue
-
-        if name == "Shark":
-            x_p, c_p = float(pts[0]["price"]), float(pts[3]["price"])
-            rng = abs(c_p - x_p)
-            lo_r = 0.886 * (1 - base.RATIO_TOL)
-            hi_r = 1.13 * (1 + base.RATIO_TOL)
-            if ratios["bullish"]:
-                prz_lo, prz_hi = c_p - hi_r * rng, c_p - lo_r * rng
-            else:
-                prz_lo, prz_hi = c_p + lo_r * rng, c_p + hi_r * rng
-        else:
-            prz_lo, prz_hi = base._prz_from_ratio(pts, d_ratio, ref, ratios["bullish"])
-        prz_lo, prz_hi = min(prz_lo, prz_hi), max(prz_lo, prz_hi)
-
-        zone_end = min(len(df) - 1, d_confirm + FOLLOW_BARS)
-        detail = (
-            f"{_date(df, d_confirm)} {name} D点右侧确认，PRZ {prz_lo:.2f}~{prz_hi:.2f}；"
-            "进入PRZ不等于反转，需等待价格离开区域确认。"
-        )
-        out.append(_annotation(
-            df, d_confirm, float(d["price"]), f"{name} PRZ", direction,
-            detail, 66, zones=[_zone(df, d_confirm, zone_end, prz_lo, prz_hi, direction)],
-            polylines=_polyline(df, pts), star=False,
-        ))
-
-        confirmation = None
-        failure = None
-        for i in range(d_confirm + 1, zone_end + 1):
-            if direction == "bull":
-                if close[i] >= prz_hi * (1 + REVERSAL_CONFIRM):
-                    confirmation = i
-                    break
-                if close[i] <= prz_lo * (1 - FAIL_BUFFER):
-                    failure = i
-                    break
-            else:
-                if close[i] <= prz_lo * (1 - REVERSAL_CONFIRM):
-                    confirmation = i
-                    break
-                if close[i] >= prz_hi * (1 + FAIL_BUFFER):
-                    failure = i
-                    break
-
-        if confirmation is not None:
-            out.append(_annotation(
-                df, confirmation,
-                low[confirmation] if direction == "bear" else high[confirmation],
-                "谐波确认", direction,
-                f"{_date(df, confirmation)} 价格按预期方向离开{name} PRZ，反转得到价格确认。",
-                76, star=True,
-            ))
-        elif failure is not None:
-            out.append(_annotation(
-                df, failure,
-                high[failure] if direction == "bear" else low[failure],
-                "谐波失效", "bear" if direction == "bull" else "bull",
-                f"{_date(df, failure)} 价格反向穿透{name} PRZ，原谐波假设失效。",
-                70, star=False,
-            ))
-        used.append((d_confirm, direction))
-    return out
-
-
-def _current_potential(df: pd.DataFrame, pivots: pd.DataFrame) -> list[dict]:
-    """只在现价已经进入潜在PRZ时提示进行中谐波，避免远端投影噪声。"""
-    candidates = base.find_xabcd(pivots, asof_idx=len(df) - 1)
-    close = float(df["close"].iloc[-1])
-    out: list[dict] = []
-    for ev in candidates:
-        if ev.get("completed"):
-            continue
-        lo, hi = sorted((float(ev["prz_low"]), float(ev["prz_high"])))
-        if not (lo <= close <= hi):
-            continue
-        out.append(_annotation(
-            df, len(df) - 1, close, "潜在PRZ", ev["direction"],
-            f"现价进入潜在{ev['name']} PRZ {lo:.2f}~{hi:.2f}，D点尚未右侧确认。",
-            52, zones=[_zone(df, len(df)-1, len(df)-1, lo, hi, ev["direction"])],
-        ))
-    return out
-
-
 def find_harmonic_annotations(df: pd.DataFrame, pivots: pd.DataFrame) -> list[dict]:
-    out = _completed_windows(df, pivots) + _current_potential(df, pivots)
-    out.sort(key=lambda e: (e["bar_idx"], e["label"]))
+    """按原版口径输出 D 点和当前 PRZ 两类标注。"""
+    asof = len(df) - 1
+    close = float(df["close"].iloc[-1])
+    events = base.find_xabcd(pivots, asof_idx=asof)
+    out: list[dict] = []
+
+    for event in events:
+        lo = min(float(event["prz_low"]), float(event["prz_high"]))
+        hi = max(float(event["prz_low"]), float(event["prz_high"]))
+        in_prz = lo <= close <= hi
+        zones = _zone(df, event, lo, hi)
+        short = _name(str(event["name"]))
+
+        if event.get("completed") and event.get("d"):
+            d_idx = int(event["d"]["idx"])
+            out.append(_annotation(
+                df=df,
+                idx=d_idx,
+                price=float(event["d"]["price"]),
+                label=f"{short}D点",
+                direction=str(event["direction"]),
+                detail=str(event["note"]),
+                score=65,
+                zones=zones,
+                star=bool(in_prz or d_idx >= asof - RECENT_D_STAR_BARS),
+            ))
+
+        # 原版逻辑：构筑中的远端投影不上图；只有现价真正进入 PRZ 才提示。
+        if in_prz:
+            direction = str(event["direction"])
+            out.append(_annotation(
+                df=df,
+                idx=asof,
+                price=close,
+                label=f"进入{short}PRZ",
+                direction=direction,
+                detail=(
+                    f"现价 {close:.2f} 落入 {event['name']} 谐波反转区（PRZ）"
+                    f"{lo:.2f}~{hi:.2f}，"
+                    f"{'潜在反转买入区' if direction == 'bull' else '潜在反转卖出区'}"
+                ),
+                score=85,
+                zones=zones,
+                star=True,
+            ))
+
+    out.sort(key=lambda item: (int(item["bar_idx"]), str(item["label"])))
     return out
