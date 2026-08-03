@@ -5,6 +5,7 @@ on:
     paths:
       - 'backend/app/**'
       - 'scripts/live_pattern_probe_v11.py'
+      - 'scripts/live_reversal_debug_v13.py'
       - 'scripts/live_reversal_probe_v13.py'
       - '.github/workflows/live-pattern-probe.yml'
 
@@ -21,5 +22,7 @@ jobs:
       - run: pip install -r backend/requirements.txt
       - name: Audit legacy candidates on real Shanghai bars
         run: python scripts/live_pattern_probe_v11.py
+      - name: Trace v13 hard-rule candidates
+        run: python scripts/live_reversal_debug_v13.py
       - name: Validate latest-trigger v13 reversal engine
         run: python scripts/live_reversal_probe_v13.py
