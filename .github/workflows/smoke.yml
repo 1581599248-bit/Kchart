@@ -28,4 +28,5 @@ jobs:
       - name: Frontend syntax
         run: |
           node --check frontend/js/api.js
+          node --check frontend/js/app.js
           node --check frontend/js/fast_bundle.js
