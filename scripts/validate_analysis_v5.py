@@ -88,6 +88,10 @@ def validate_fibonacci_confirmation() -> None:
     events = fibonacci_history.find_fibonacci_touches(df, pivots)
     fib618 = [e for e in events if e["label"] == "Fib 0.618"]
     assert fib618 and fib618[0]["bar_idx"] >= 35, fib618
+    # Fib重要位保留标签/箭头，但主图不得绘制横线、色带或折线。
+    assert all(not e.get("lines") for e in events), events
+    assert all(not e.get("zones") for e in events), events
+    assert all(not e.get("polylines") for e in events), events
 
 
 def validate_full_analysis() -> None:
@@ -98,6 +102,10 @@ def validate_full_analysis() -> None:
     for event in result["annotations"]:
         assert 0 <= event["bar_idx"] < len(df), event
         assert len(event["label"]) <= 8, event["label"]
+        if event.get("kind") == "fibonacci":
+            assert not event.get("lines"), event
+            assert not event.get("zones"), event
+            assert not event.get("polylines"), event
     summary = result["summary"]
     assert "若" in summary["outlook_text"]
     assert "不预设方向" in summary["outlook_text"]
