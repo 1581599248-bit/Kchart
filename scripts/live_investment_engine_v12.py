@@ -1,4 +1,4 @@
-"""Live audit for the refined investment-grade engine using production bars.
+"""Live audit for the fully integrated investment-grade engine using production bars.
 
 The production endpoint is used only as a market-data source. All analysis is
 performed by the code checked out in the pull request.
@@ -18,7 +18,7 @@ import requests
 
 from backend.app import analysis_v7
 from backend.app import indicators
-from backend.app import investment_engine_v13 as engine
+from backend.app import investment_engine_v14 as engine
 
 BASE_URL = "https://kchart.onrender.com/api/chart"
 INDEX_CODES = ["000001.SH", "000300.SH", "000905.SH", "000688.SH", "399001.SZ", "399006.SZ"]
@@ -94,6 +94,7 @@ def validate_result(code: str, df: pd.DataFrame, asset_kind: str) -> tuple[int, 
         code,
         f"bars={len(df)}", f"asof={date_at(df, len(df)-1)}",
         f"patterns={len(patterns)}", f"indicators={diagnostics['indicator_events']}",
+        "families=" + ",".join(diagnostics.get("pattern_families") or []),
         "structures=" + ",".join(
             f"{event['kind']}[{date_at(df,event['start_idx'])}->{date_at(df,event['confirm_idx'])}]"
             for event in patterns
@@ -121,8 +122,6 @@ def validate_shanghai_macro_top(df: pd.DataFrame) -> None:
     assert float(top["key_levels"]["neckline"]) > 0
     assert int(top.get("touches", 0)) >= 1
 
-    # Prefix causality: once the break is confirmed, later August bars must not be
-    # required to create or relocate the January-to-July structure.
     cutoff = min(len(df), int(top["confirm_idx"]) + 6)
     prefix = df.iloc[:cutoff].copy().reset_index(drop=True)
     prefix_patterns = engine.find_investment_patterns(prefix)
@@ -140,6 +139,7 @@ def main() -> None:
     total_patterns = 0
     total_indicators = 0
     shanghai = None
+    observed_families: set[str] = set()
     for code in INDEX_CODES:
         df = fetch_df(code)
         if code == "000001.SH":
@@ -147,20 +147,29 @@ def main() -> None:
         p, s = validate_result(code, df, "index")
         total_patterns += p
         total_indicators += s
+        observed_families.update(
+            event.get("kind", "") for event in engine.find_investment_patterns(df)
+        )
     for code in EQUITY_CODES:
         df = fetch_df(code)
         p, s = validate_result(code, df, "equity")
         total_patterns += p
         total_indicators += s
+        observed_families.update(
+            event.get("kind", "") for event in engine.find_investment_patterns(df)
+        )
 
     assert shanghai is not None
     validate_shanghai_macro_top(shanghai)
     assets = len(INDEX_CODES) + len(EQUITY_CODES)
     assert 4 <= total_patterns <= assets * engine.MAX_PATTERN_EVENTS, total_patterns
     assert total_indicators <= assets * engine.MAX_INDICATOR_EVENTS, total_indicators
+    assert "macro_double_top" in observed_families
+    assert any(kind not in {"macro_double_top", "macro_double_bottom"} for kind in observed_families)
     print(
-        "live investment engine v13 validation OK",
+        "live investment engine v14 validation OK",
         f"patterns={total_patterns}", f"indicators={total_indicators}",
+        "families=" + ",".join(sorted(observed_families)),
     )
 
 
