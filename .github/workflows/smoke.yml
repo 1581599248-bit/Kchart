@@ -21,19 +21,19 @@ jobs:
         run: |
           python - <<'PY'
           from backend.app.main_fast import app
-          from backend.app import analysis, analysis_v5, analysis_v7, chart_service_v7, investment_engine_v13
+          from backend.app import analysis, analysis_v5, analysis_v7, chart_service_v7, investment_engine_v14
           paths = {getattr(r, 'path', '') for r in app.routes}
           assert '/api/chart' in paths, paths
           assert analysis_v5.ANALYSIS_VERSION == 'analysis_v5.0'
           assert analysis.ANALYSIS_VERSION == analysis_v7.ANALYSIS_VERSION
-          assert analysis_v7.ANALYSIS_VERSION == 'analysis_v13.0-investment-grade'
-          assert investment_engine_v13.ENGINE_VERSION == 'investment_engine_v13.0'
-          assert investment_engine_v13.MIN_REVERSAL_BARS == 75
-          assert investment_engine_v13.MAX_PATTERN_EVENTS == 4
-          assert investment_engine_v13.MAX_INDICATOR_EVENTS == 5
+          assert analysis_v7.ANALYSIS_VERSION == 'analysis_v14.0-investment-grade'
+          assert investment_engine_v14.ENGINE_VERSION == 'investment_engine_v14.0'
+          assert investment_engine_v14.MIN_REVERSAL_BARS == 75
+          assert investment_engine_v14.MAX_PATTERN_EVENTS == 4
+          assert investment_engine_v14.MAX_INDICATOR_EVENTS == 5
           assert chart_service_v7._base.analysis_mod is analysis_v7
-          assert chart_service_v7._base._BUNDLE_VERSION == 'bundle_v13_investment_grade'
-          print('main_fast refined investment-grade route import OK')
+          assert chart_service_v7._base._BUNDLE_VERSION == 'bundle_v14_investment_grade'
+          print('main_fast fully integrated investment-grade route import OK')
           PY
       - name: Performance refactor equivalence
         run: |
@@ -96,10 +96,14 @@ jobs:
           grep -q "{ key: 'ema', label: 'EMA', series: \['ema20', 'ema60'\] }" frontend/js/moving_average_controls.js
       - name: Investment-grade source assertions
         run: |
-          grep -q 'analysis_v13.0-investment-grade' backend/app/analysis_v7.py
-          grep -q 'bundle_v13_investment_grade' backend/app/chart_service_v7.py
+          grep -q 'analysis_v14.0-investment-grade' backend/app/analysis_v7.py
+          grep -q 'bundle_v14_investment_grade' backend/app/chart_service_v7.py
           grep -q 'RSI6最高.*>90' backend/app/investment_engine_v12.py
           grep -q 'RSI6最低.*<10' backend/app/investment_engine_v12.py
           grep -q 'ema_regime_signals' backend/app/investment_engine_v12.py
           grep -q 'macd_divergence_signals' backend/app/investment_engine_v12.py
+          grep -q 'waves_v7.find_waves' backend/app/investment_engine_v14.py
+          grep -q 'pattern_geometry_v9.apply_geometry' backend/app/investment_engine_v14.py
+          grep -q 'structures_v7.find_broadening_breaks' backend/app/investment_engine_v14.py
+          grep -q 'strict_tops_v7.find_strict_top_patterns' backend/app/investment_engine_v14.py
           grep -q 'asset_kind = "index" if ts_api.is_index(code) else "equity"' backend/app/chart_service.py
