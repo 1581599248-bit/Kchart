@@ -60,6 +60,15 @@ def date_at(df: pd.DataFrame, idx: int):
     return pd.to_datetime(df["trade_date"].iloc[int(idx)]).date()
 
 
+def event_key(event: dict) -> tuple:
+    levels = event.get("key_levels") or {}
+    return (
+        str(event.get("kind")), int(event.get("start_idx", -1)),
+        int(event.get("middle_idx", -1)), int(event.get("end_idx", -1)),
+        int(event.get("confirm_idx", -1)), round(float(levels.get("neckline", 0)), 3),
+    )
+
+
 def validate_result(code: str, df: pd.DataFrame, asset_kind: str) -> tuple[int, int]:
     patterns = engine.find_investment_patterns(df)
     result = analysis_v7.analyze(df, asset_kind=asset_kind)
@@ -111,9 +120,19 @@ def validate_shanghai_macro_top(df: pd.DataFrame) -> None:
     assert int(top["confirm_idx"]) - int(top["start_idx"]) >= engine.MIN_REVERSAL_BARS
     assert float(top["key_levels"]["neckline"]) > 0
     assert int(top.get("touches", 0)) >= 1
+
+    # Prefix causality: once the break is confirmed, later August bars must not be
+    # required to create or relocate the January-to-July structure.
+    cutoff = min(len(df), int(top["confirm_idx"]) + 6)
+    prefix = df.iloc[:cutoff].copy().reset_index(drop=True)
+    prefix_patterns = engine.find_investment_patterns(prefix)
+    assert event_key(top) in {event_key(event) for event in prefix_patterns}, (
+        top, prefix_patterns
+    )
     print(
         "Shanghai macro top:", start_date, end_date, confirm_date,
         "neckline=", top["key_levels"]["neckline"], "touches=", top.get("touches"),
+        "prefix_causal=OK",
     )
 
 
@@ -136,8 +155,9 @@ def main() -> None:
 
     assert shanghai is not None
     validate_shanghai_macro_top(shanghai)
-    assert 4 <= total_patterns <= 45, total_patterns
-    assert total_indicators <= 55, total_indicators
+    assets = len(INDEX_CODES) + len(EQUITY_CODES)
+    assert 4 <= total_patterns <= assets * engine.MAX_PATTERN_EVENTS, total_patterns
+    assert total_indicators <= assets * engine.MAX_INDICATOR_EVENTS, total_indicators
     print(
         "live investment engine v13 validation OK",
         f"patterns={total_patterns}", f"indicators={total_indicators}",
