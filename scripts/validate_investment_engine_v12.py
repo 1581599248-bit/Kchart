@@ -1,4 +1,4 @@
-"""Deterministic regression checks for investment_engine_v12."""
+"""Deterministic regression checks for the refined investment engine."""
 from __future__ import annotations
 
 import sys
@@ -13,7 +13,8 @@ import pandas as pd
 
 from backend.app import analysis_v7
 from backend.app import indicators
-from backend.app import investment_engine_v12 as engine
+from backend.app import investment_engine_v12 as rules
+from backend.app import investment_engine_v13 as engine
 
 
 def base_frame(n: int = 900, seed: int = 20260804) -> pd.DataFrame:
@@ -42,7 +43,6 @@ def test_large_filter(df: pd.DataFrame) -> None:
     }
     assert not engine._large_pattern(df, small)
 
-    # Magnify the tested section so the candidate clears percentage/ATR requirements.
     boosted = df.copy()
     boosted.loc[100:145, ["high", "low", "close"]] *= 0.90
     boosted.loc[146:190, ["high", "low", "close"]] *= 1.10
@@ -61,15 +61,13 @@ def test_large_filter(df: pd.DataFrame) -> None:
 def test_rsi_thresholds(df: pd.DataFrame) -> None:
     work = df.iloc[:220].copy().reset_index(drop=True)
     work["RSI6"] = 50.0
-    # 80/20 must not create events.
     work.loc[80:84, "RSI6"] = [82, 84, 83, 75, 70]
     work.loc[120:124, "RSI6"] = [18, 16, 17, 25, 30]
-    assert engine.rsi_extreme_signals(work) == []
+    assert rules.rsi_extreme_signals(work) == []
 
-    # >90 followed by a confirmed exit may create one overbought event.
     work.loc[150:155, "RSI6"] = [91, 94, 93, 88, 84, 80]
     work.loc[154:156, "close"] = work.loc[154:156, "MA10"].to_numpy() * [0.995, 0.99, 0.985]
-    signals = engine.rsi_extreme_signals(work)
+    signals = rules.rsi_extreme_signals(work)
     assert any(event["label"] == "RSI超买" for event in signals), signals
 
 
@@ -85,7 +83,7 @@ def test_ema_entanglement() -> None:
     computed = indicators.compute_all(df.rename(columns={"trade_date": "ts"})).rename(
         columns={"ts": "trade_date"}
     )
-    assert engine.ema_regime_signals(computed) == []
+    assert rules.ema_regime_signals(computed) == []
 
 
 def test_fibonacci_filter() -> None:
@@ -110,6 +108,7 @@ def test_full_chain(df: pd.DataFrame) -> None:
     assert all(event["label"] in {"0.5", "0.618"} for event in fib)
     pattern_names = [event for event in result["annotations"] if event.get("kind") == "pattern" and event.get("history_label")]
     assert len(pattern_names) <= engine.MAX_PATTERN_EVENTS
+    assert result["diagnostics"]["indicator_events"] <= engine.MAX_INDICATOR_EVENTS
     assert result["diagnostics"]["causal"] is True
     assert result["diagnostics"]["analysis_version"] == analysis_v7.ANALYSIS_VERSION
 
@@ -121,7 +120,7 @@ def main() -> None:
     test_ema_entanglement()
     test_fibonacci_filter()
     test_full_chain(df)
-    print("investment engine v12 validation OK")
+    print("investment engine v13 validation OK")
 
 
 if __name__ == "__main__":
