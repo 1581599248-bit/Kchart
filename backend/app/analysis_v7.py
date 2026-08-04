@@ -1,9 +1,9 @@
-"""Production analysis adapter for the fully integrated investment-grade engine."""
+"""Production analysis adapter: 结构识别引擎 v16（大级别优先·严格几何·全因果）。"""
 from __future__ import annotations
 
-from . import investment_engine_v14 as engine
+from . import structure_engine_v16 as engine
 
-ANALYSIS_VERSION = "analysis_v14.0-investment-grade"
+ANALYSIS_VERSION = "analysis_v16.0-structure-first"
 
 
 def analyze(df, timeframe: str = "1d", asset_kind: str = "equity") -> dict:
