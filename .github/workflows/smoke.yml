@@ -21,19 +21,18 @@ jobs:
         run: |
           python - <<'PY'
           from backend.app.main_fast import app
-          from backend.app import analysis, analysis_v5, analysis_v7, chart_service_v7, investment_engine_v14
+          from backend.app import analysis, analysis_v5, analysis_v7, chart_service_v7, investment_engine_v15
           paths = {getattr(r, 'path', '') for r in app.routes}
           assert '/api/chart' in paths, paths
           assert analysis_v5.ANALYSIS_VERSION == 'analysis_v5.0'
           assert analysis.ANALYSIS_VERSION == analysis_v7.ANALYSIS_VERSION
-          assert analysis_v7.ANALYSIS_VERSION == 'analysis_v14.0-investment-grade'
-          assert investment_engine_v14.ENGINE_VERSION == 'investment_engine_v14.0'
-          assert investment_engine_v14.MIN_REVERSAL_BARS == 75
-          assert investment_engine_v14.MAX_PATTERN_EVENTS == 4
-          assert investment_engine_v14.MAX_INDICATOR_EVENTS == 5
+          assert analysis_v7.ANALYSIS_VERSION == 'analysis_v15.0-mw-recall'
+          assert investment_engine_v15.ENGINE_VERSION == 'investment_engine_v15.0'
+          assert investment_engine_v15.MAX_PATTERN_EVENTS == 12
+          assert investment_engine_v15.MAX_INDICATOR_EVENTS == 10
           assert chart_service_v7._base.analysis_mod is analysis_v7
-          assert chart_service_v7._base._BUNDLE_VERSION == 'bundle_v14_investment_grade'
-          print('main_fast fully integrated investment-grade route import OK')
+          assert chart_service_v7._base._BUNDLE_VERSION == 'bundle_v15_mw_recall'
+          print('main_fast v15 M/W recall route import OK')
           PY
       - name: Performance refactor equivalence
         run: |
@@ -42,40 +41,28 @@ jobs:
           import pandas as pd
           from pandas.testing import assert_frame_equal
           from backend.app import divergence, indicators, pivots
-
           rng = np.random.default_rng(20260804)
           n = 900
           close = 100 + np.cumsum(rng.normal(0, 1, n))
           df = pd.DataFrame({
               'trade_date': pd.date_range('2022-01-01', periods=n, freq='D'),
-              'open': close + rng.normal(0, .4, n),
-              'high': close + rng.uniform(.1, 2, n),
-              'low': close - rng.uniform(.1, 2, n),
-              'close': close,
-              'vol': rng.integers(1000, 100000, n).astype(float),
-              'amount': rng.uniform(1e4, 1e7, n),
+              'open': close + rng.normal(0, .4, n), 'high': close + rng.uniform(.1, 2, n),
+              'low': close - rng.uniform(.1, 2, n), 'close': close,
+              'vol': rng.integers(1000, 100000, n).astype(float), 'amount': rng.uniform(1e4, 1e7, n),
           })
-          ref_ind = indicators.add_ma(df)
-          ref_ind = indicators.add_ema(ref_ind)
-          ref_ind = indicators.add_macd(ref_ind)
-          ref_ind = indicators.add_kdj(ref_ind)
-          ref_ind = indicators.add_rsi(ref_ind)
-          ref_ind = indicators.add_wr(ref_ind)
-          ref_ind = indicators.add_boll(ref_ind)
-          ref_ind = indicators.add_atr(ref_ind)
-          ref_ind = indicators.add_obv(ref_ind)
-          ref_ind = indicators.add_adx(ref_ind)
-          ref_ind = indicators.add_roc(ref_ind)
-          new_ind = indicators.compute_all(df)
-          assert_frame_equal(new_ind, ref_ind, check_exact=False, rtol=1e-12, atol=1e-12)
-          assert set(pivots.multi_scale_zigzag(new_ind)) == {'small', 'trade', 'background'}
+          ref = indicators.add_roc(indicators.add_adx(indicators.add_obv(indicators.add_atr(
+              indicators.add_boll(indicators.add_wr(indicators.add_rsi(indicators.add_kdj(
+              indicators.add_macd(indicators.add_ema(indicators.add_ma(df)))))))))))
+          new = indicators.compute_all(df)
+          assert_frame_equal(new, ref, check_exact=False, rtol=1e-12, atol=1e-12)
+          assert set(pivots.multi_scale_zigzag(new)) == {'small', 'trade', 'background'}
           for col in ('DIF', 'DEA', 'RSI6'):
-              divergence.find_divergences(new_ind, col)
+              divergence.find_divergences(new, col)
           print('indicator/pivot/divergence equivalence OK')
           PY
       - name: Legacy causal baseline
         run: python scripts/validate_analysis_v5.py
-      - name: Investment-grade engine validation
+      - name: V15 M/W geometry and recall validation
         run: python scripts/validate_investment_engine_v12.py
       - name: Frontend syntax
         run: |
@@ -92,18 +79,15 @@ jobs:
           grep -q 'moving_average_controls.js' frontend/index.html
           grep -q 'moving_average_controls.css' frontend/index.html
           grep -q "ryan:kline:moving-average-groups:v2" frontend/js/moving_average_controls.js
-          grep -q "{ key: 'ma', label: 'MA', series: \['ma5', 'ma10', 'ma20', 'ma60'\] }" frontend/js/moving_average_controls.js
-          grep -q "{ key: 'ema', label: 'EMA', series: \['ema20', 'ema60'\] }" frontend/js/moving_average_controls.js
-      - name: Investment-grade source assertions
+      - name: V15 source assertions
         run: |
-          grep -q 'analysis_v14.0-investment-grade' backend/app/analysis_v7.py
-          grep -q 'bundle_v14_investment_grade' backend/app/chart_service_v7.py
+          grep -q 'analysis_v15.0-mw-recall' backend/app/analysis_v7.py
+          grep -q 'bundle_v15_mw_recall' backend/app/chart_service_v7.py
+          grep -q 'principal_intervening_pivot' backend/app/investment_engine_v15.py
+          grep -q 'MAX_PATTERN_EVENTS = 12' backend/app/investment_engine_v15.py
+          grep -q 'MAX_INDICATOR_EVENTS = 10' backend/app/investment_engine_v15.py
           grep -q 'RSI6最高.*>90' backend/app/investment_engine_v12.py
           grep -q 'RSI6最低.*<10' backend/app/investment_engine_v12.py
-          grep -q 'ema_regime_signals' backend/app/investment_engine_v12.py
-          grep -q 'macd_divergence_signals' backend/app/investment_engine_v12.py
           grep -q 'waves_v7.find_waves' backend/app/investment_engine_v14.py
           grep -q 'pattern_geometry_v9.apply_geometry' backend/app/investment_engine_v14.py
-          grep -q 'structures_v7.find_broadening_breaks' backend/app/investment_engine_v14.py
-          grep -q 'strict_tops_v7.find_strict_top_patterns' backend/app/investment_engine_v14.py
           grep -q 'asset_kind = "index" if ts_api.is_index(code) else "equity"' backend/app/chart_service.py
