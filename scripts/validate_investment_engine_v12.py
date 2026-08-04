@@ -1,4 +1,4 @@
-"""Deterministic regression checks for the refined investment engine."""
+"""Deterministic regression checks for the fully integrated investment engine."""
 from __future__ import annotations
 
 import sys
@@ -14,7 +14,8 @@ import pandas as pd
 from backend.app import analysis_v7
 from backend.app import indicators
 from backend.app import investment_engine_v12 as rules
-from backend.app import investment_engine_v13 as engine
+from backend.app import investment_engine_v14 as engine
+from backend.app import pattern_taxonomy_v8
 
 
 def base_frame(n: int = 900, seed: int = 20260804) -> pd.DataFrame:
@@ -38,7 +39,7 @@ def base_frame(n: int = 900, seed: int = 20260804) -> pd.DataFrame:
 
 def test_large_filter(df: pd.DataFrame) -> None:
     small = {
-        "kind": "ascending_triangle", "start_idx": 100, "end_idx": 120,
+        "kind": "bullish_triangle_directional", "start_idx": 100, "end_idx": 120,
         "confirm_idx": 125, "trace": [], "score": 90,
     }
     assert not engine._large_pattern(df, small)
@@ -47,7 +48,7 @@ def test_large_filter(df: pd.DataFrame) -> None:
     boosted.loc[100:145, ["high", "low", "close"]] *= 0.90
     boosted.loc[146:190, ["high", "low", "close"]] *= 1.10
     large = {
-        "kind": "ascending_triangle", "start_idx": 100, "end_idx": 180,
+        "kind": "bullish_triangle_directional", "start_idx": 100, "end_idx": 180,
         "confirm_idx": 190,
         "trace": [{"points": [
             {"t": str(boosted["trade_date"].iloc[100].date()), "p": float(boosted["high"].iloc[100])},
@@ -56,6 +57,20 @@ def test_large_filter(df: pd.DataFrame) -> None:
         "score": 90,
     }
     assert engine._large_pattern(boosted, large)
+
+
+def test_directional_taxonomy() -> None:
+    raw = [
+        {"kind": "bull_flag", "name": "上升旗形", "direction": "bull", "confirm_idx": 100},
+        {"kind": "bear_flag", "name": "下降旗形", "direction": "bear", "confirm_idx": 110},
+        {"kind": "rising_wedge", "name": "上升楔形", "direction": "bear", "confirm_idx": 120},
+        {"kind": "falling_wedge", "name": "下降楔形", "direction": "bull", "confirm_idx": 130},
+        {"kind": "asc_triangle", "name": "上升三角形", "direction": "bull", "confirm_idx": 140},
+        {"kind": "desc_triangle", "name": "下降三角形", "direction": "bear", "confirm_idx": 150},
+    ]
+    out = pattern_taxonomy_v8.apply_pattern_taxonomy(raw)
+    names = {event["name"] for event in out}
+    assert names == {"牛旗形", "熊旗形", "熊楔形", "牛楔形", "看涨三角形", "看跌三角形"}
 
 
 def test_rsi_thresholds(df: pd.DataFrame) -> None:
@@ -106,21 +121,29 @@ def test_full_chain(df: pd.DataFrame) -> None:
     assert all(len(label) <= 8 for label in labels)
     fib = [event for event in result["annotations"] if event.get("kind") == "fibonacci"]
     assert all(event["label"] in {"0.5", "0.618"} for event in fib)
-    pattern_names = [event for event in result["annotations"] if event.get("kind") == "pattern" and event.get("history_label")]
+    pattern_names = [
+        event for event in result["annotations"]
+        if event.get("kind") == "pattern" and event.get("history_label")
+    ]
     assert len(pattern_names) <= engine.MAX_PATTERN_EVENTS
     assert result["diagnostics"]["indicator_events"] <= engine.MAX_INDICATOR_EVENTS
     assert result["diagnostics"]["causal"] is True
     assert result["diagnostics"]["analysis_version"] == analysis_v7.ANALYSIS_VERSION
+    assert result["diagnostics"]["candidate_modules"] == [
+        "macro_reversals", "legacy_patterns", "strict_tops",
+        "strict_waves", "strict_broadening", "pivot_geometry",
+    ]
 
 
 def main() -> None:
     df = base_frame()
     test_large_filter(df)
+    test_directional_taxonomy()
     test_rsi_thresholds(df)
     test_ema_entanglement()
     test_fibonacci_filter()
     test_full_chain(df)
-    print("investment engine v13 validation OK")
+    print("investment engine v14 validation OK")
 
 
 if __name__ == "__main__":
