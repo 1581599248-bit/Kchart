@@ -1,9 +1,9 @@
-"""Chart service adapter for the fully integrated investment-grade engine."""
+"""Chart service adapter for the structure-first engine v16."""
 from . import analysis_v7
 from . import chart_service as _base
 
 _base.analysis_mod = analysis_v7
-_base._BUNDLE_VERSION = "bundle_v14_investment_grade"
+_base._BUNDLE_VERSION = "bundle_v16_structure_first"
 
 build = _base.build
 get = _base.get
