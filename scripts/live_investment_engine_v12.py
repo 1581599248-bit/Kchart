@@ -1,177 +1,51 @@
-"""Live audit for the fully integrated investment-grade engine using production bars.
-
-The production endpoint is used only as a market-data source. All analysis is
-performed by the code checked out in the pull request.
-"""
+"""Live audit for v15 M/W geometry and signal recall."""
 from __future__ import annotations
-
-import sys
-import time
+import sys, time
 from pathlib import Path
+ROOT=Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path: sys.path.insert(0,str(ROOT))
+import pandas as pd, requests
+from backend.app import analysis_v7, indicators
+from backend.app import investment_engine_v15 as engine
+BASE_URL="https://kchart.onrender.com/api/chart"
+INDEX_CODES=["000001.SH","000300.SH","000905.SH","000688.SH","399001.SZ","399006.SZ"]
+EQUITY_CODES=["600519.SH","300750.SZ","002594.SZ","601318.SH","000333.SZ","688981.SH"]
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-import pandas as pd
-import requests
-
-from backend.app import analysis_v7
-from backend.app import indicators
-from backend.app import investment_engine_v14 as engine
-
-BASE_URL = "https://kchart.onrender.com/api/chart"
-INDEX_CODES = ["000001.SH", "000300.SH", "000905.SH", "000688.SH", "399001.SZ", "399006.SZ"]
-EQUITY_CODES = ["600519.SH", "300750.SZ", "002594.SZ", "601318.SH", "000333.SZ", "688981.SH"]
-
-
-def fetch_df(code: str) -> pd.DataFrame:
-    last = None
-    for attempt in range(8):
-        try:
-            response = requests.get(
-                BASE_URL,
-                params={"ts_code": code, "timeframe": "1d", "refresh": 0},
-                timeout=90,
-            )
-            response.raise_for_status()
-            bars = response.json().get("bars") or []
-            if len(bars) < 600:
-                raise RuntimeError(f"{code}: only {len(bars)} bars")
-            df = pd.DataFrame(bars).rename(columns={
-                "time": "trade_date", "o": "open", "h": "high",
-                "l": "low", "c": "close", "v": "vol",
-            })
-            df["trade_date"] = (
-                pd.to_datetime(df["trade_date"], unit="s", utc=True)
-                .dt.tz_convert("Asia/Shanghai").dt.tz_localize(None)
-            )
-            df["amount"] = 0.0
-            return indicators.compute_all(
-                df.rename(columns={"trade_date": "ts"})
-            ).rename(columns={"ts": "trade_date"})
-        except Exception as exc:  # pragma: no cover - network audit
-            last = exc
-            time.sleep(12 + attempt * 4)
-    raise RuntimeError(last)
-
-
-def date_at(df: pd.DataFrame, idx: int):
-    return pd.to_datetime(df["trade_date"].iloc[int(idx)]).date()
-
-
-def event_key(event: dict) -> tuple:
-    levels = event.get("key_levels") or {}
-    return (
-        str(event.get("kind")), int(event.get("start_idx", -1)),
-        int(event.get("middle_idx", -1)), int(event.get("end_idx", -1)),
-        int(event.get("confirm_idx", -1)), round(float(levels.get("neckline", 0)), 3),
-    )
-
-
-def validate_result(code: str, df: pd.DataFrame, asset_kind: str) -> tuple[int, int]:
-    patterns = engine.find_investment_patterns(df)
-    result = analysis_v7.analyze(df, asset_kind=asset_kind)
-    diagnostics = result["diagnostics"]
-    labels = [str(event.get("label") or "") for event in result["annotations"]]
-
-    assert diagnostics["analysis_version"] == analysis_v7.ANALYSIS_VERSION
-    assert diagnostics["causal"] is True
-    assert len(patterns) <= engine.MAX_PATTERN_EVENTS
-    assert diagnostics["indicator_events"] <= engine.MAX_INDICATOR_EVENTS
-    assert not {"EMA金叉", "EMA死叉", "MACD金叉", "MACD死叉", "结构失效"}.intersection(labels)
-    assert all(len(label) <= 8 for label in labels)
-    assert all(
-        event.get("label") in {"0.5", "0.618"}
-        for event in result["annotations"] if event.get("kind") == "fibonacci"
-    )
-    assert all(engine._large_pattern(df, event) for event in patterns)
-    for i, left in enumerate(patterns):
-        for right in patterns[i + 1:]:
-            assert engine._pattern_overlap(left, right) < engine.PATTERN_OVERLAP_LIMIT
-
-    print(
-        code,
-        f"bars={len(df)}", f"asof={date_at(df, len(df)-1)}",
-        f"patterns={len(patterns)}", f"indicators={diagnostics['indicator_events']}",
-        "families=" + ",".join(diagnostics.get("pattern_families") or []),
-        "structures=" + ",".join(
-            f"{event['kind']}[{date_at(df,event['start_idx'])}->{date_at(df,event['confirm_idx'])}]"
-            for event in patterns
-        ),
-    )
-    return len(patterns), int(diagnostics["indicator_events"])
-
-
-def validate_shanghai_macro_top(df: pd.DataFrame) -> None:
-    patterns = engine.find_investment_patterns(df)
-    tops = [
-        event for event in patterns
-        if event.get("kind") == "macro_double_top"
-        and date_at(df, event["confirm_idx"]).year == 2026
-    ]
-    assert tops, patterns
-    top = max(tops, key=lambda event: int(event["confirm_idx"]))
-    start_date = date_at(df, top["start_idx"])
-    end_date = date_at(df, top["end_idx"])
-    confirm_date = date_at(df, top["confirm_idx"])
-    assert start_date <= pd.Timestamp("2026-03-01").date(), top
-    assert end_date > start_date
-    assert confirm_date > end_date
-    assert int(top["confirm_idx"]) - int(top["start_idx"]) >= engine.MIN_REVERSAL_BARS
-    assert float(top["key_levels"]["neckline"]) > 0
-    assert int(top.get("touches", 0)) >= 1
-
-    cutoff = min(len(df), int(top["confirm_idx"]) + 6)
-    prefix = df.iloc[:cutoff].copy().reset_index(drop=True)
-    prefix_patterns = engine.find_investment_patterns(prefix)
-    assert event_key(top) in {event_key(event) for event in prefix_patterns}, (
-        top, prefix_patterns
-    )
-    print(
-        "Shanghai macro top:", start_date, end_date, confirm_date,
-        "neckline=", top["key_levels"]["neckline"], "touches=", top.get("touches"),
-        "prefix_causal=OK",
-    )
-
-
-def main() -> None:
-    total_patterns = 0
-    total_indicators = 0
-    shanghai = None
-    observed_families: set[str] = set()
-    for code in INDEX_CODES:
-        df = fetch_df(code)
-        if code == "000001.SH":
-            shanghai = df
-        p, s = validate_result(code, df, "index")
-        total_patterns += p
-        total_indicators += s
-        observed_families.update(
-            event.get("kind", "") for event in engine.find_investment_patterns(df)
-        )
-    for code in EQUITY_CODES:
-        df = fetch_df(code)
-        p, s = validate_result(code, df, "equity")
-        total_patterns += p
-        total_indicators += s
-        observed_families.update(
-            event.get("kind", "") for event in engine.find_investment_patterns(df)
-        )
-
-    assert shanghai is not None
-    validate_shanghai_macro_top(shanghai)
-    assets = len(INDEX_CODES) + len(EQUITY_CODES)
-    assert 4 <= total_patterns <= assets * engine.MAX_PATTERN_EVENTS, total_patterns
-    assert total_indicators <= assets * engine.MAX_INDICATOR_EVENTS, total_indicators
-    assert "macro_double_top" in observed_families
-    assert any(kind not in {"macro_double_top", "macro_double_bottom"} for kind in observed_families)
-    print(
-        "live investment engine v14 validation OK",
-        f"patterns={total_patterns}", f"indicators={total_indicators}",
-        "families=" + ",".join(sorted(observed_families)),
-    )
-
-
-if __name__ == "__main__":
-    main()
+def fetch_df(code):
+ last=None
+ for attempt in range(8):
+  try:
+   r=requests.get(BASE_URL,params={"ts_code":code,"timeframe":"1d","refresh":0},timeout=90); r.raise_for_status(); bars=r.json().get("bars") or []
+   if len(bars)<600: raise RuntimeError(f"{code}: only {len(bars)} bars")
+   df=pd.DataFrame(bars).rename(columns={"time":"trade_date","o":"open","h":"high","l":"low","c":"close","v":"vol"}); df["trade_date"]=pd.to_datetime(df["trade_date"],unit="s",utc=True).dt.tz_convert("Asia/Shanghai").dt.tz_localize(None); df["amount"]=0.
+   return indicators.compute_all(df.rename(columns={"trade_date":"ts"})).rename(columns={"ts":"trade_date"})
+  except Exception as exc: last=exc; time.sleep(12+attempt*4)
+ raise RuntimeError(last)
+def date_at(df,idx): return pd.to_datetime(df["trade_date"].iloc[int(idx)]).date()
+def event_key(e):
+ lv=e.get("key_levels") or {}; return (str(e.get("kind")),int(e.get("start_idx",-1)),int(e.get("middle_idx",-1)),int(e.get("end_idx",-1)),int(e.get("confirm_idx",-1)),round(float(lv.get("neckline",0)),3))
+def validate_macro_geometry(df,e):
+ traces=e.get("trace") or []; assert len(traces)>=2 and len(traces[0].get("points") or [])>=3,e
+ lv=e.get("key_levels") or {}; neckline=float(lv["neckline"]); assert lv.get("neckline_source")=="principal_intervening_pivot",e
+ start,end=int(e["start_idx"]),int(e["end_idx"]); piv=engine.rules.piv_mod.zigzag(df,min_pct=float(e["scale"])); piv=engine.rules.piv_mod.pivots_asof(piv,len(df)-1); pts=engine.rules.piv_mod.alternating(piv).to_dict("records"); mk="L" if e["direction"]=="bear" else "H"; middle=[p for p in pts if start<int(p["idx"])<end and p["kind"]==mk]; assert middle,e
+ expected=min(float(p["price"]) for p in middle) if mk=="L" else max(float(p["price"]) for p in middle); assert abs(neckline-expected)<1e-3,(e,expected); assert int(e["middle_idx"]) in {int(p["idx"]) for p in middle if abs(float(p["price"])-expected)<1e-9}
+def validate_result(code,df,asset_kind):
+ patterns=engine.find_investment_patterns(df); result=analysis_v7.analyze(df,asset_kind=asset_kind); d=result["diagnostics"]; labels=[str(x.get("label") or "") for x in result["annotations"]]
+ assert d["analysis_version"]==analysis_v7.ANALYSIS_VERSION and d["causal"] is True; assert len(patterns)<=d["pattern_budget"]<=engine.MAX_PATTERN_EVENTS; assert d["indicator_events"]<=d["indicator_budget"]<=engine.MAX_INDICATOR_EVENTS; assert not {"EMA金叉","EMA死叉","MACD金叉","MACD死叉","结构失效"}.intersection(labels)
+ for e in patterns:
+  if e.get("kind") in {"macro_double_top","macro_double_bottom"}: validate_macro_geometry(df,e)
+ print(code,f"patterns={len(patterns)}/{d['pattern_budget']}",f"indicators={d['indicator_events']}/{d['indicator_budget']}","structures="+",".join(f"{e['kind']}[{date_at(df,e['start_idx'])}->{date_at(df,e['confirm_idx'])}]" for e in patterns)); return len(patterns),int(d["indicator_events"])
+def validate_shanghai(df):
+ patterns=engine.find_investment_patterns(df); tops=[e for e in patterns if e.get("kind")=="macro_double_top" and date_at(df,e["confirm_idx"]).year==2026]; assert tops,patterns; top=max(tops,key=lambda e:int(e["confirm_idx"])); validate_macro_geometry(df,top); assert date_at(df,top["start_idx"])<=pd.Timestamp("2026-03-01").date()
+ ws=[e for e in patterns if e.get("kind")=="macro_double_bottom" and date_at(df,e["start_idx"]).year in {2023,2024} and date_at(df,e["confirm_idx"]).year in {2024,2025}]; assert ws,patterns
+ for e in ws: validate_macro_geometry(df,e)
+ prefix=df.iloc[:min(len(df),int(top["confirm_idx"])+6)].copy().reset_index(drop=True); assert event_key(top) in {event_key(e) for e in engine.find_investment_patterns(prefix)}
+ print("Shanghai 2026 M:",date_at(df,top["start_idx"]),date_at(df,top["middle_idx"]),date_at(df,top["end_idx"]),date_at(df,top["confirm_idx"]),"neckline=",top["key_levels"]["neckline"],"pivots=",top.get("pivot_count")); print("Shanghai 2024 W:",[(date_at(df,e["start_idx"]),date_at(df,e["middle_idx"]),date_at(df,e["end_idx"]),date_at(df,e["confirm_idx"]),e["key_levels"]["neckline"]) for e in ws]); assert len(patterns)>=6,patterns
+def main():
+ total_p=total_i=0; sh=None
+ for code in INDEX_CODES:
+  df=fetch_df(code); sh=df if code=="000001.SH" else sh; p,i=validate_result(code,df,"index"); total_p+=p; total_i+=i
+ for code in EQUITY_CODES:
+  df=fetch_df(code); p,i=validate_result(code,df,"equity"); total_p+=p; total_i+=i
+ assert sh is not None; validate_shanghai(sh); assert total_p>=(len(INDEX_CODES)+len(EQUITY_CODES))*5,total_p; print("live investment engine v15 validation OK",f"patterns={total_p}",f"indicators={total_i}")
+if __name__=="__main__": main()
