@@ -40,20 +40,21 @@ def test_large_filter(df: pd.DataFrame) -> None:
         "kind": "ascending_triangle", "start_idx": 100, "end_idx": 120,
         "confirm_idx": 125, "trace": [], "score": 90,
     }
-    large = {
-        "kind": "ascending_triangle", "start_idx": 100, "end_idx": 180,
-        "confirm_idx": 190,
-        "trace": [{"points": [
-            {"t": str(df["trade_date"].iloc[100].date()), "p": float(df["high"].iloc[100])},
-            {"t": str(df["trade_date"].iloc[180].date()), "p": float(df["high"].iloc[180])},
-        ], "style": "solid"}],
-        "score": 90,
-    }
     assert not engine._large_pattern(df, small)
+
     # Magnify the tested section so the candidate clears percentage/ATR requirements.
     boosted = df.copy()
     boosted.loc[100:145, ["high", "low", "close"]] *= 0.90
     boosted.loc[146:190, ["high", "low", "close"]] *= 1.10
+    large = {
+        "kind": "ascending_triangle", "start_idx": 100, "end_idx": 180,
+        "confirm_idx": 190,
+        "trace": [{"points": [
+            {"t": str(boosted["trade_date"].iloc[100].date()), "p": float(boosted["high"].iloc[100])},
+            {"t": str(boosted["trade_date"].iloc[180].date()), "p": float(boosted["high"].iloc[180])},
+        ], "style": "solid"}],
+        "score": 90,
+    }
     assert engine._large_pattern(boosted, large)
 
 
