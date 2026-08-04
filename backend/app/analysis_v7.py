@@ -1,9 +1,9 @@
-"""Production analysis adapter for the refined investment-grade engine."""
+"""Production analysis adapter for the fully integrated investment-grade engine."""
 from __future__ import annotations
 
-from . import investment_engine_v13 as engine
+from . import investment_engine_v14 as engine
 
-ANALYSIS_VERSION = "analysis_v13.0-investment-grade"
+ANALYSIS_VERSION = "analysis_v14.0-investment-grade"
 
 
 def analyze(df, timeframe: str = "1d", asset_kind: str = "equity") -> dict:
