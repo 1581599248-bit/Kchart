@@ -28,6 +28,9 @@ jobs:
           assert analysis.ANALYSIS_VERSION == analysis_v7.ANALYSIS_VERSION
           assert analysis_v7.ANALYSIS_VERSION == 'analysis_v13.0-investment-grade'
           assert investment_engine_v13.ENGINE_VERSION == 'investment_engine_v13.0'
+          assert investment_engine_v13.MIN_REVERSAL_BARS == 75
+          assert investment_engine_v13.MAX_PATTERN_EVENTS == 4
+          assert investment_engine_v13.MAX_INDICATOR_EVENTS == 5
           assert chart_service_v7._base.analysis_mod is analysis_v7
           assert chart_service_v7._base._BUNDLE_VERSION == 'bundle_v13_investment_grade'
           print('main_fast refined investment-grade route import OK')
@@ -97,9 +100,6 @@ jobs:
           grep -q 'bundle_v13_investment_grade' backend/app/chart_service_v7.py
           grep -q 'RSI6最高.*>90' backend/app/investment_engine_v12.py
           grep -q 'RSI6最低.*<10' backend/app/investment_engine_v12.py
-          grep -q 'MIN_REVERSAL_BARS = 75' backend/app/investment_engine_v13.py
-          grep -q 'MAX_PATTERN_EVENTS = 4' backend/app/investment_engine_v13.py
-          grep -q 'MAX_INDICATOR_EVENTS = 5' backend/app/investment_engine_v13.py
           grep -q 'ema_regime_signals' backend/app/investment_engine_v12.py
           grep -q 'macd_divergence_signals' backend/app/investment_engine_v12.py
           grep -q 'asset_kind = "index" if ts_api.is_index(code) else "equity"' backend/app/chart_service.py
