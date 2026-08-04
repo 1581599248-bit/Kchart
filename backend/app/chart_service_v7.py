@@ -1,12 +1,9 @@
-"""v7 chart service adapter.
-
-复用既有高速缓存、数据加载和序列化链路，只替换分析引擎并提升缓存版本。
-"""
+"""Chart service adapter for the fully integrated investment-grade engine."""
 from . import analysis_v7
 from . import chart_service as _base
 
 _base.analysis_mod = analysis_v7
-_base._BUNDLE_VERSION = "bundle_v11_index_reversal"
+_base._BUNDLE_VERSION = "bundle_v14_investment_grade"
 
 build = _base.build
 get = _base.get
