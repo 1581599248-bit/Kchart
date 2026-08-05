@@ -6,7 +6,7 @@
   if (!AV) return;
 
   const CONFIRMED_PATTERN_LABELS = new Set([
-    '突破颈线', '跌破颈线', '向上突破', '向下跌破',
+    '突破颈线', '跌破颈线', '回测颈线', '向上突破', '向下跌破',
     '突破趋势', '跌破趋势', '结构失效', '扩散上破', '扩散下破',
   ]);
 
@@ -40,7 +40,7 @@
       if (a.star || isPatternConfirmation(a)) return true;
       return false;
     }
-    if (a.active === false && idx < lastBarIdx - 160) return false;
+    if (a.active === false && a.kind === 'indicator' && idx < lastBarIdx - 160) return false;
     return true;
   }
 
