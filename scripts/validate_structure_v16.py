@@ -1,4 +1,4 @@
-"""结构识别引擎 v16 验证：合成形态 / 真实指数 / 因果截断 / RSI 趋势过滤。"""
+"""结构识别引擎 v16 验证：合成形态 / 真实指数 / 因果截断 / 纯结构输出 / 大级别M顶。"""
 from __future__ import annotations
 
 import json
@@ -154,31 +154,26 @@ def test_causality():
     print("C 截断因果(50%/70%/85%)+确定性 OK")
 
 
-# ---------- D. RSI 信号恢复显示：趋势行情照标并注明趋势属性 ----------
+# ---------- D. 纯结构输出：其余信号一律屏蔽 + 注释从 2020-03 开始 ----------
 
-def test_rsi_trend_filter():
-    n = 260
-    i = np.arange(n, dtype=float)
-    close = 100 + 0.5 * i + 2.0 * np.sin(i / 2.5)
-    df = _mk_df(close, seed=11)
-    df = indicators.compute_all(df).reset_index(drop=True)
-    out = engine.rsi_extreme_signals(df)
-    ob = [e for e in out if e["label"] == "RSI超买"]
-    assert ob, "RSI超买信号必须显示（趋势行情同样标注）"
-    noted = [e for e in ob if "强趋势" in str(e.get("detail"))]
-    assert noted, "强趋势中的信号须在详情注明趋势属性"
-    print(f"D RSI信号照标+趋势注明 OK（{len(ob)} 个超买，{len(noted)} 个带强趋势注明）")
+def test_structure_only_output():
+    banned = {"RSI超买", "RSI超卖", "MACD顶背离", "MACD底背离", "EMA金叉", "EMA死叉",
+              "小波段", "0.5", "0.618", "鲨鱼D点"}
+    df = _baked_df("000001.SH")
+    res = analysis_v7.analyze(df)
+    labels = [a["label"] for a in res["annotations"]]
+    assert not banned.intersection(labels), banned.intersection(labels)
+    assert res["diagnostics"]["indicator_events"] == 0
+    # 数据从 2020-01 起，但所有注释须从 2020-03 开始
+    for a in res["annotations"]:
+        dt = str(df["trade_date"].iloc[int(a["bar_idx"])])[:10]
+        assert dt >= engine.MIN_ANNOTATION_DATE, (a["label"], dt)
+    print(f"D 纯结构输出+注释≥{engine.MIN_ANNOTATION_DATE} OK（{len(res['annotations'])} 条标注）")
 
 
-# ---------- E. EMA 金叉死叉 / 回测颈线 / 完整描摹 / 紫色小波段 ----------
+# ---------- E. 回测颈线 / 完整描摹（突破腿 + 颈线从左峰画起）/ 级别配色 ----------
 
 def test_new_annotations():
-    # 上行→下行→再上行：至少一次 EMA金叉 和 一次 EMA死叉，全部显示
-    close = np.concatenate([_ramp(140, 90, 130), _ramp(130, 130, 92), _ramp(130, 92, 118)])
-    res = analysis_v7.analyze(_mk_df(close))
-    labels = [a["label"] for a in res["annotations"]]
-    assert "EMA金叉" in labels and "EMA死叉" in labels, labels
-
     # M顶 + 确认后回抽：必须标注“回测颈线”，且描摹画完整（突破腿 + 颈线从左峰画起）
     m = np.concatenate([_ramp(80, 90, 118), _ramp(30, 118, 104),
                         _ramp(30, 104, 117.5), _ramp(30, 117.5, 96),
@@ -195,17 +190,40 @@ def test_new_annotations():
     dashed = [pl for pl in tr["polylines"] if pl["style"] == "dashed"]
     assert dashed and dashed[0]["points"][0]["t"] <= solid["points"][0]["t"], \
         "颈线须从左峰画起"
-    # 紫色小波道路径
-    wave = [a for a in res["annotations"]
-            if a["label"] == "小波段" and a.get("trace_only")]
-    assert wave and wave[0]["polylines"][0].get("color") == "#b26bff"
-    print("E EMA金叉死叉/回测颈线/完整描摹/紫色小波段 OK")
+    print("E 回测颈线/完整描摹/级别配色 OK")
+
+
+# ---------- F. 大级别 M顶：两峰价差小、间隔约 50 根也必须识别（2026 实盘案例） ----------
+
+def test_big_scale_dual_top():
+    # 前置升势 → 峰1 → 深谷 → 峰2（仅高 0.2%）→ 破颈线：峰间隔 50 根，属背景级
+    m = np.concatenate([_ramp(80, 100, 130), _ramp(25, 130, 117),
+                        _ramp(25, 117, 132), _ramp(25, 132, 115),
+                        _ramp(25, 115, 131.8), _ramp(70, 131.8, 100)])
+    df = _mk_df(m)
+    structs = engine.find_structures(indicators.compute_all(df).reset_index(drop=True))
+    bg = [e for e in structs if e["kind"] == "double_top" and e["scale"] == "background"]
+    assert bg, [(e["name"], e["scale"], e["start_idx"], e["end_idx"]) for e in structs]
+    top = bg[0]
+    assert top["status"] == "confirmed" and top["star"], "破颈线应确认并给星标"
+    gap = int(top["end_idx"]) - int(top["start_idx"])
+    assert 40 <= gap <= 80, gap
+    # 同区域交易级小 M顶 必须被大级别抑制（只讲一个故事）
+    tr = [e for e in structs if e["kind"] == "double_top" and e["scale"] == "trade"]
+    for t in tr:
+        inter = max(0, min(t["confirm_idx"] or len(df) - 1, top["confirm_idx"] or len(df) - 1)
+                    - max(t["start_idx"], top["start_idx"]))
+        span = max(min((t["confirm_idx"] or len(df) - 1) - t["start_idx"],
+                       (top["confirm_idx"] or len(df) - 1) - top["start_idx"]), 1)
+        assert inter / span < engine.PATTERN_OVERLAP_LIMIT, "大M顶应压制同区小M顶"
+    print(f"F 大级别M顶(间隔{gap}根)识别+确认+抑制小结构 OK")
 
 
 if __name__ == "__main__":
     test_synthetic()
     test_real_indices()
     test_causality()
-    test_rsi_trend_filter()
+    test_structure_only_output()
     test_new_annotations()
+    test_big_scale_dual_top()
     print("validate_structure_v16 全部通过")
