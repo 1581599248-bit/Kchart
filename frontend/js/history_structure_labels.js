@@ -43,16 +43,19 @@
             const text = String(row.a.label || '结构');
             const w = ctx.measureText(text).width;
             const below = row.a.direction === 'bull';
-            const y = row.y + (below ? 31 * vr : -31 * vr);
-            const box = {
-              x1: row.x - w / 2 - 4 * hr,
-              x2: row.x + w / 2 + 4 * hr,
-              y1: y - 8 * vr,
-              y2: y + 8 * vr,
-            };
-            if (placed.some(b => box.x1 < b.x2 && box.x2 > b.x1 && box.y1 < b.y2 && box.y2 > b.y1)) {
-              continue;
-            }
+            // 碰撞时沿竖直方向错位堆叠，不丢弃任何结构名称
+            let y = row.y + (below ? 31 * vr : -31 * vr), shift = 0, box;
+            do {
+              box = {
+                x1: row.x - w / 2 - 4 * hr,
+                x2: row.x + w / 2 + 4 * hr,
+                y1: y - 8 * vr,
+                y2: y + 8 * vr,
+              };
+              if (!placed.some(b => box.x1 < b.x2 && box.x2 > b.x1 && box.y1 < b.y2 && box.y2 > b.y1)) break;
+              shift++;
+              y = row.y + (below ? (31 + shift * 18) * vr : -(31 + shift * 18) * vr);
+            } while (shift < 10);
             placed.push(box);
             ctx.fillStyle = 'rgba(13,17,23,0.78)';
             ctx.fillRect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
