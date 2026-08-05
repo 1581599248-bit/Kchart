@@ -172,21 +172,27 @@ def _confirm_break(df: pd.DataFrame, start: int, direction: str,
 
 def _mk_event(df, kind, direction, scale, pts, neckline, target, invalidation,
               confirm_idx, status, note) -> dict:
-    """统一构造结构事件；trace = pivot 折线 + 颈线（虚线）。"""
+    """统一构造结构事件；trace = pivot 折线（含突破腿，画完整）+ 颈线（虚线）。
+
+    颜色约定：大级别=金色，交易级（小一点的趋势）=紫色。前端按 color 渲染。
+    """
     names = _NAMES
     start_idx = int(pts[0]["idx"])
     end_idx = int(pts[-1]["idx"])
-    trace = [{
-        "points": [{"t": _date(df, int(p["idx"])), "p": round(float(p["price"]), 4)}
-                   for p in pts],
-        "style": "solid",
-    }]
-    if neckline is not None and _finite(neckline[1]):
+    color = "#f0b90b" if scale == "background" else "#b26bff"
+    points = [{"t": _date(df, int(p["idx"])), "p": round(float(p["price"]), 4)}
+              for p in pts]
+    # 补突破腿：折线延伸到确认根收盘（构筑中则延伸到最新收盘），形态画完整
+    end_i = int(confirm_idx) if confirm_idx is not None else len(df) - 1
+    points.append({"t": _date(df, end_i),
+                   "p": round(float(df["close"].iloc[end_i]), 4)})
+    trace = [{"points": points, "style": "solid", "color": color}]
+    if neckline is not None and _finite(neckline[0][1]):
         (t1, p1), (t2, p2) = neckline
         trace.append({
             "points": [{"t": _date(df, t1), "p": round(float(p1), 4)},
                        {"t": _date(df, t2), "p": round(float(p2), 4)}],
-            "style": "dashed",
+            "style": "dashed", "color": color,
         })
     confirmed = status == "confirmed"
     score = 80 if scale == "background" else 68
@@ -270,7 +276,7 @@ def _dual(df: pd.DataFrame, zz: pd.DataFrame, direction: str, scale: str) -> lis
         )
         events.append(_mk_event(
             df, kind, direction, scale, [a, m, b],
-            ((im, level), (confirm if confirm is not None else len(df) - 1, level)),
+            ((i1, level), (confirm if confirm is not None else len(df) - 1, level)),
             target, invalidation, confirm, status, note))
     return events
 
@@ -360,7 +366,7 @@ def _hs(df: pd.DataFrame, zz: pd.DataFrame, direction: str, scale: str) -> list[
         )
         events.append(_mk_event(
             df, kind, direction, scale, [ls, t1, hd, t2, rs],
-            ((i_t1, neck1), (confirm if confirm is not None else len(df) - 1, neck_now)),
+            ((i_ls, level_at(i_ls)), (confirm if confirm is not None else len(df) - 1, neck_now)),
             target, invalidation, confirm, status, note))
     return events
 
@@ -451,8 +457,15 @@ def _trend_regime(df: pd.DataFrame, idx: int, direction: str) -> bool:
     return close > ma60 if direction == "bear" else close < ma60
 
 
+def _regime_note(df: pd.DataFrame, idx: int, direction: str) -> str:
+    """信号触发时若处于强趋势行情，在详情中注明（照标不隐藏，仅提示属性）。"""
+    if _trend_regime(df, idx, direction):
+        return "（ADX≥25强趋势中：极端读数常为趋势延续，作提示而非反转预判）"
+    return ""
+
+
 def rsi_extreme_signals(df: pd.DataFrame) -> list[dict]:
-    """RSI6>90/<10 的衰竭/修复确认；强趋势行情一律过滤。"""
+    """RSI6>90/<10 的衰竭/修复确认；趋势行情同样标注，但在详情中注明趋势属性。"""
     rsi = df["RSI6"].to_numpy(dtype=float)
     close = df["close"].to_numpy(dtype=float)
     ma10 = df["MA10"].to_numpy(dtype=float)
@@ -465,18 +478,14 @@ def rsi_extreme_signals(df: pd.DataFrame) -> list[dict]:
         if not np.isfinite(rsi[idx]):
             continue
         if state is None:
-            if rsi[idx] > RSI_OB and not _trend_regime(df, idx, "bear"):
+            if rsi[idx] > RSI_OB:
                 state = {"direction": "bear", "entry": idx,
                          "extreme": float(rsi[idx]), "price": float(high[idx])}
-            elif rsi[idx] < RSI_OS and not _trend_regime(df, idx, "bull"):
+            elif rsi[idx] < RSI_OS:
                 state = {"direction": "bull", "entry": idx,
                          "extreme": float(rsi[idx]), "price": float(low[idx])}
             continue
         d = str(state["direction"])
-        # 进入状态后若演变为强趋势行情，放弃本次跟踪（趋势吃掉极值）
-        if _trend_regime(df, idx, d):
-            state = None
-            continue
         if d == "bear":
             state["extreme"] = max(state["extreme"], float(rsi[idx]))
             state["price"] = max(state["price"], float(high[idx]))
@@ -486,7 +495,8 @@ def rsi_extreme_signals(df: pd.DataFrame) -> list[dict]:
                 out.append(_event(
                     df, idx, "RSI超买", "bear",
                     f"RSI6最高{state['extreme']:.1f}（>90）后跌回85下方并失守MA10；"
-                    f"前高{state['price']:.2f}收复则风险信号失效。", 62, f"rsi90:{idx}"))
+                    f"前高{state['price']:.2f}收复则风险信号失效。"
+                    + _regime_note(df, idx, d), 62, f"rsi90:{idx}"))
                 last[d] = idx
                 state = None
             elif expired:
@@ -500,7 +510,8 @@ def rsi_extreme_signals(df: pd.DataFrame) -> list[dict]:
                 out.append(_event(
                     df, idx, "RSI超卖", "bull",
                     f"RSI6最低{state['extreme']:.1f}（<10）后升回15上方并站回MA10；"
-                    f"前低{state['price']:.2f}失守则修复信号失效。", 62, f"rsi10:{idx}"))
+                    f"前低{state['price']:.2f}失守则修复信号失效。"
+                    + _regime_note(df, idx, d), 62, f"rsi10:{idx}"))
                 last[d] = idx
                 state = None
             elif expired:
@@ -554,6 +565,89 @@ def macd_divergence_signals(df: pd.DataFrame) -> list[dict]:
                     last[direction] = idx
                     break
     return out
+
+
+def ema_cross_signals(df: pd.DataFrame) -> list[dict]:
+    """EMA20/EMA60 金叉死叉：全部显示，箭头指到交叉发生的 K 线（kind=trend）。"""
+    e20 = df["EMA20"].to_numpy(dtype=float)
+    e60 = df["EMA60"].to_numpy(dtype=float)
+    out: list[dict] = []
+    for idx in range(1, len(df)):
+        if not all(np.isfinite(x) for x in (e20[idx - 1], e20[idx], e60[idx - 1], e60[idx])):
+            continue
+        if e20[idx - 1] <= e60[idx - 1] and e20[idx] > e60[idx]:
+            e = _event(df, idx, "EMA金叉", "bull",
+                       f"EMA20上穿EMA60（{e20[idx]:.2f}/{e60[idx]:.2f}），中期趋势转多；"
+                       f"跌回EMA60下方则信号失效。", 58, f"ema_gc:{idx}")
+            e["kind"] = "trend"
+            out.append(e)
+        elif e20[idx - 1] >= e60[idx - 1] and e20[idx] < e60[idx]:
+            e = _event(df, idx, "EMA死叉", "bear",
+                       f"EMA20下穿EMA60（{e20[idx]:.2f}/{e60[idx]:.2f}），中期趋势转空；"
+                       f"站回EMA60上方则信号失效。", 58, f"ema_dc:{idx}")
+            e["kind"] = "trend"
+            out.append(e)
+    return out
+
+
+def _neckline_retests(df: pd.DataFrame, structures: list[dict]) -> list[dict]:
+    """已确认结构：价格首次重返颈线区域 → 标注“回测颈线”（每个结构最多一次）。
+
+    全程因果：只在 confirm_idx 之后扫描；截断重跑结论一致。
+    """
+    out: list[dict] = []
+    high = df["high"].to_numpy(dtype=float)
+    low = df["low"].to_numpy(dtype=float)
+    for e in structures:
+        c = e.get("confirm_idx")
+        neck = (e.get("key_levels") or {}).get("neckline")
+        if c is None or not _finite(neck):
+            continue
+        neck = float(neck)
+        atr = _atr(df, int(c))
+        tol = max(neck * 0.004, atr * 0.5 if math.isfinite(atr) else 0.0)
+        hit = None
+        for idx in range(int(c) + 4, len(df)):
+            if low[idx] - tol <= neck <= high[idx] + tol:
+                hit = idx
+                break
+        if hit is None:
+            continue
+        sid = f"{e.get('kind')}:{e.get('start_idx')}:{e.get('confirm_idx')}"
+        direction = str(e.get("direction") or "bear")
+        out.append({
+            "bar_idx": hit, "price": neck, "kind": "pattern",
+            "label": "回测颈线", "direction": direction, "star": False,
+            "detail": (f"{e.get('name')}确认后价格首次回抽颈线 {neck:.2f}："
+                       f"{'不能收复则延续下行，有效站回颈线之上需重估结构。' if direction == 'bear' else '不能守住则延续上行存疑，有效跌破颈线之下需重估结构。'}"),
+            "lines": [], "zones": [], "polylines": [],
+            "active": bool(e.get("active", True)),
+            "_score": 66, "_grp": f"retest:{sid}", "structure_id": sid,
+        })
+    return out
+
+
+def wave_path_annotation(df: pd.DataFrame) -> dict | None:
+    """小级别波段路径（紫色细线）：最近的小尺度 zigzag 腿 + 最新收盘。
+
+    用于呈现近期 abc 节奏、重新驻底/筑顶尝试，只画线不占标签位。
+    """
+    zz = _zz(df, 0.012, 0.030, 1.2)
+    pts = zz.tail(6).to_dict("records")
+    if len(pts) < 3:
+        return None
+    points = [{"t": _date(df, int(p["idx"])), "p": round(float(p["price"]), 4)}
+              for p in pts]
+    last_close = float(df["close"].iloc[-1])
+    points.append({"t": _date(df, len(df) - 1), "p": round(last_close, 4)})
+    return {
+        "bar_idx": len(df) - 1, "price": last_close, "kind": "trend",
+        "label": "小波段", "direction": "range", "star": False,
+        "detail": "小级别波段路径（紫色）：近期 abc 节奏与驻底/筑顶尝试，仅供观察。",
+        "lines": [], "zones": [],
+        "polylines": [{"points": points, "style": "solid", "color": "#b26bff"}],
+        "trace_only": True, "active": True, "_score": 30, "_grp": "wave_path",
+    }
 
 
 def _select_indicator_events(events: list[dict]) -> list[dict]:
@@ -747,12 +841,17 @@ def analyze(df: pd.DataFrame, timeframe: str = "1d", asset_kind: str = "equity")
 
     structures = find_structures(d)
     pattern_events = pattern_annotations(d, structures)
+    retest_events = _neckline_retests(d, structures)
     indicator_events = _select_indicator_events(
         rsi_extreme_signals(d) + macd_divergence_signals(d))
+    trend_events = ema_cross_signals(d)
+    wave = wave_path_annotation(d)
     pivots = piv_mod.find_pivots(d)
     fib_events = _filter_fibonacci(fibonacci_history.find_fibonacci_touches(d, pivots))
     harmonic_events = harmonics_history.find_harmonic_annotations(d, pivots)[-2:]
-    annotations = _clean(pattern_events + indicator_events + fib_events + harmonic_events)
+    annotations = _clean(
+        pattern_events + retest_events + indicator_events + trend_events
+        + ([wave] if wave else []) + fib_events + harmonic_events)
 
     return {
         "annotations": annotations,
@@ -765,6 +864,8 @@ def analyze(df: pd.DataFrame, timeframe: str = "1d", asset_kind: str = "equity")
             "structure_families": sorted({e["kind"] for e in structures}),
             "structure_scales": sorted({e["scale"] for e in structures}),
             "indicator_events": len(indicator_events),
+            "ema_cross_events": len(trend_events),
+            "neckline_retest_events": len(retest_events),
             "fibonacci_events": len(fib_events),
             "harmonic_events": len(harmonic_events),
             "causal": True,
