@@ -97,7 +97,11 @@
                 ctx.strokeStyle = pl.color || GOLD;
                 ctx.lineJoin = 'round';
                 ctx.lineCap = 'round';
-                ctx.lineWidth = (a.trace_only ? (pl.style === 'dashed' ? 1.7 : 2.3) : 1.8) * hr;
+                // 大结构（金线）粗描，小结构（紫线）细描
+                const big = (pl.color || GOLD) === GOLD;
+                ctx.lineWidth = (a.trace_only
+                  ? (big ? (pl.style === 'dashed' ? 2.0 : 2.8) : (pl.style === 'dashed' ? 1.2 : 1.5))
+                  : 1.8) * hr;
                 if (pl.style === 'dashed') ctx.setLineDash([5 * hr, 4 * hr]);
                 ctx.beginPath();
                 ctx.moveTo(pts[0].x * hr, pts[0].y * vr);
@@ -144,22 +148,33 @@
                 ctx.textAlign = 'center';
                 const PAD = 4, TH = 12, placed = [], maxX = scope.bitmapSize.width;
                 for (const c of cand) {
-                  const s = c.spec, px = s.bold ? 11 : 10;
+                  const s = c.spec, px = s.bold ? 10 : 9;
                   ctx.font = (s.bold ? 'bold ' : '') + (px * hr) + "px 'Trebuchet MS', sans-serif";
                   const w = ctx.measureText(s.text).width;
                   let cx = c.x * hr;
                   cx = Math.max(w / 2 + 2, Math.min(cx, maxX - w / 2 - 2));
-                  const gap = (s.bold ? 30 : 22) * vr;
+                  const gap = (s.bold ? 24 : 17) * vr;
                   const y0 = s.below ? (c.y * vr + gap) : (c.y * vr - gap - TH * vr);
-                  // 标签碰撞时沿竖直方向错位堆叠，永不丢弃（用户要求字不因挤压消失）
-                  let ly = y0, shift = 0, box;
-                  do {
-                    box = { x1: cx - w / 2 - PAD * hr, x2: cx + w / 2 + PAD * hr, y1: ly - PAD * vr, y2: ly + TH * vr + PAD * vr };
-                    if (!placed.some(b2 => box.x1 < b2.x2 && box.x2 > b2.x1 && box.y1 < b2.y2 && box.y2 > b2.y1)) break;
-                    shift++;
-                    ly = y0 + (s.below ? 1 : -1) * shift * (TH + 5) * vr;
-                  } while (shift < 10);
-                  placed.push(box);
+                  // 标签碰撞：首选侧最多 3 层，再换对侧最多 3 层；实在没空位就取重叠最少
+                  // 的位置——永不丢弃（用户要求字不因挤压消失），同时钳在图区内不飞天
+                  const paneH = scope.bitmapSize.height;
+                  const mkBox = ly => ({ x1: cx - w / 2 - PAD * hr, x2: cx + w / 2 + PAD * hr, y1: ly - PAD * vr, y2: ly + TH * vr + PAD * vr });
+                  const hits = b => placed.reduce((n, b2) => n + ((b.x1 < b2.x2 && b.x2 > b2.x1 && b.y1 < b2.y2 && b.y2 > b2.y1) ? 1 : 0), 0);
+                  const y0flip = s.below ? (c.y * vr - gap - TH * vr) : (c.y * vr + gap);
+                  let ly = null, bestLy = y0, bestHits = Infinity;
+                  for (let side = 0; side < 2 && ly === null; side++) {
+                    const base = side === 0 ? y0 : y0flip;
+                    const dir = (side === 0 ? s.below : !s.below) ? 1 : -1;
+                    for (let shift = 0; shift <= 3; shift++) {
+                      let candY = base + dir * shift * (TH + 3) * vr;
+                      candY = Math.max(2, Math.min(candY, paneH - (TH + 2) * vr - 2));
+                      const h = hits(mkBox(candY));
+                      if (h === 0) { ly = candY; break; }
+                      if (h < bestHits) { bestHits = h; bestLy = candY; }
+                    }
+                  }
+                  if (ly === null) ly = bestLy;
+                  placed.push(mkBox(ly));
                   ctx.fillStyle = 'rgba(13,17,23,0.72)';
                   ctx.fillRect(cx - w / 2 - 2 * hr, ly - 1 * vr, w + 4 * hr, TH * vr + 2 * vr);
                   ctx.fillStyle = s.color;
