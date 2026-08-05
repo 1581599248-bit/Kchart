@@ -43,19 +43,29 @@
             const text = String(row.a.label || '结构');
             const w = ctx.measureText(text).width;
             const below = row.a.direction === 'bull';
-            // 碰撞时沿竖直方向错位堆叠，不丢弃任何结构名称
-            let y = row.y + (below ? 31 * vr : -31 * vr), shift = 0, box;
-            do {
-              box = {
-                x1: row.x - w / 2 - 4 * hr,
-                x2: row.x + w / 2 + 4 * hr,
-                y1: y - 8 * vr,
-                y2: y + 8 * vr,
-              };
-              if (!placed.some(b => box.x1 < b.x2 && box.x2 > b.x1 && box.y1 < b.y2 && box.y2 > b.y1)) break;
-              shift++;
-              y = row.y + (below ? (31 + shift * 18) * vr : -(31 + shift * 18) * vr);
-            } while (shift < 10);
+            // 碰撞：首选侧最多 3 层，再试对侧；都不空就取重叠最少的位置，
+            // 不丢弃任何结构名称，同时钳在图区内不飞天
+            const paneH = scope.bitmapSize.height;
+            const mkBox = y => ({
+              x1: row.x - w / 2 - 4 * hr,
+              x2: row.x + w / 2 + 4 * hr,
+              y1: y - 8 * vr,
+              y2: y + 8 * vr,
+            });
+            const hits = b => placed.reduce((n, b2) => n + ((b.x1 < b2.x2 && b.x2 > b2.x1 && b.y1 < b2.y2 && b.y2 > b2.y1) ? 1 : 0), 0);
+            let y = null, bestY = row.y + (below ? 31 * vr : -31 * vr), bestHits = Infinity;
+            for (let side = 0; side < 2 && y === null; side++) {
+              const dir = (side === 0 ? below : !below) ? 1 : -1;
+              for (let shift = 0; shift <= 3; shift++) {
+                let candY = row.y + dir * (31 + shift * 16) * vr;
+                candY = Math.max(10 * vr, Math.min(candY, paneH - 10 * vr));
+                const h = hits(mkBox(candY));
+                if (h === 0) { y = candY; break; }
+                if (h < bestHits) { bestHits = h; bestY = candY; }
+              }
+            }
+            if (y === null) y = bestY;
+            const box = mkBox(y);
             placed.push(box);
             ctx.fillStyle = 'rgba(13,17,23,0.78)';
             ctx.fillRect(box.x1, box.y1, box.x2 - box.x1, box.y2 - box.y1);
