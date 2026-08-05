@@ -154,7 +154,7 @@ def test_causality():
     print("C 截断因果(50%/70%/85%)+确定性 OK")
 
 
-# ---------- D. RSI 趋势过滤：强趋势行情不标超买 ----------
+# ---------- D. RSI 信号恢复显示：趋势行情照标并注明趋势属性 ----------
 
 def test_rsi_trend_filter():
     n = 260
@@ -162,16 +162,44 @@ def test_rsi_trend_filter():
     close = 100 + 0.5 * i + 2.0 * np.sin(i / 2.5)
     df = _mk_df(close, seed=11)
     df = indicators.compute_all(df).reset_index(drop=True)
-    warm = 120  # ADX 预热期之后的已确立强趋势段
-    adx_tail = float(df["ADX"].iloc[-1])
-    rsi_tail = float(df["RSI6"].iloc[-1])
-    assert adx_tail >= engine.TREND_ADX, f"合成强趋势 ADX={adx_tail:.1f} 未达标"
-    assert (df["RSI6"].iloc[warm:] > engine.RSI_OB).any(), "强趋势段未出现 RSI>90"
     out = engine.rsi_extreme_signals(df)
-    late = [e for e in out if e["label"] == "RSI超买" and int(e["bar_idx"]) >= warm]
-    assert not late, f"已确立强趋势(ADX={adx_tail:.0f})不应标超买: {len(late)}"
-    print(f"D RSI趋势过滤 OK（ADX={adx_tail:.0f}, 强趋势段RSI6>90共"
-          f"{int((df['RSI6'].iloc[warm:] > engine.RSI_OB).sum())}根 → 0 个超买标注）")
+    ob = [e for e in out if e["label"] == "RSI超买"]
+    assert ob, "RSI超买信号必须显示（趋势行情同样标注）"
+    noted = [e for e in ob if "强趋势" in str(e.get("detail"))]
+    assert noted, "强趋势中的信号须在详情注明趋势属性"
+    print(f"D RSI信号照标+趋势注明 OK（{len(ob)} 个超买，{len(noted)} 个带强趋势注明）")
+
+
+# ---------- E. EMA 金叉死叉 / 回测颈线 / 完整描摹 / 紫色小波段 ----------
+
+def test_new_annotations():
+    # 上行→下行→再上行：至少一次 EMA金叉 和 一次 EMA死叉，全部显示
+    close = np.concatenate([_ramp(140, 90, 130), _ramp(130, 130, 92), _ramp(130, 92, 118)])
+    res = analysis_v7.analyze(_mk_df(close))
+    labels = [a["label"] for a in res["annotations"]]
+    assert "EMA金叉" in labels and "EMA死叉" in labels, labels
+
+    # M顶 + 确认后回抽：必须标注“回测颈线”，且描摹画完整（突破腿 + 颈线从左峰画起）
+    m = np.concatenate([_ramp(80, 90, 118), _ramp(30, 118, 104),
+                        _ramp(30, 104, 117.5), _ramp(30, 117.5, 96),
+                        _ramp(20, 96, 104.5), _ramp(110, 104.5, 88)])
+    res = analysis_v7.analyze(_mk_df(m))
+    labels = [a["label"] for a in res["annotations"]]
+    assert any("M顶" in x for x in labels), labels
+    assert "回测颈线" in labels, labels
+    tr = [a for a in res["annotations"]
+          if a.get("trace_only") and "M顶" in str(a["label"])][0]
+    solid = [pl for pl in tr["polylines"] if pl["style"] == "solid"][0]
+    assert len(solid["points"]) >= 4, "折线应含突破腿（两峰一谷+确认根）"
+    assert solid.get("color"), "折线必须带颜色（大级别金/交易级紫）"
+    dashed = [pl for pl in tr["polylines"] if pl["style"] == "dashed"]
+    assert dashed and dashed[0]["points"][0]["t"] <= solid["points"][0]["t"], \
+        "颈线须从左峰画起"
+    # 紫色小波道路径
+    wave = [a for a in res["annotations"]
+            if a["label"] == "小波段" and a.get("trace_only")]
+    assert wave and wave[0]["polylines"][0].get("color") == "#b26bff"
+    print("E EMA金叉死叉/回测颈线/完整描摹/紫色小波段 OK")
 
 
 if __name__ == "__main__":
@@ -179,4 +207,5 @@ if __name__ == "__main__":
     test_real_indices()
     test_causality()
     test_rsi_trend_filter()
+    test_new_annotations()
     print("validate_structure_v16 全部通过")
