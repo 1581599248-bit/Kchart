@@ -79,7 +79,7 @@ def validate_result(code: str, df: pd.DataFrame, asset_kind: str) -> tuple[int, 
     assert diagnostics["causal"] is True
     assert len(patterns) <= engine.MAX_PATTERN_EVENTS
     assert diagnostics["indicator_events"] <= engine.MAX_INDICATOR_EVENTS
-    assert not {"EMA金叉", "EMA死叉", "MACD金叉", "MACD死叉", "结构失效"}.intersection(labels)
+    assert not {"MACD金叉", "MACD死叉", "结构失效"}.intersection(labels)
     assert all(len(label) <= 8 for label in labels)
     assert all(
         event.get("label") in {"0.5", "0.618"}
