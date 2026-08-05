@@ -93,9 +93,11 @@
                   .filter(p => p.x != null && p.y != null);
                 if (pts.length < 2) continue;
                 ctx.save();
-                ctx.globalAlpha = a.trace_only ? 0.55 : 1;
-                ctx.strokeStyle = GOLD;
-                ctx.lineWidth = (a.trace_only ? 1.15 : 1.5) * hr;
+                ctx.globalAlpha = a.trace_only ? 0.95 : 1;
+                ctx.strokeStyle = pl.color || GOLD;
+                ctx.lineJoin = 'round';
+                ctx.lineCap = 'round';
+                ctx.lineWidth = (a.trace_only ? (pl.style === 'dashed' ? 1.7 : 2.3) : 1.8) * hr;
                 if (pl.style === 'dashed') ctx.setLineDash([5 * hr, 4 * hr]);
                 ctx.beginPath();
                 ctx.moveTo(pts[0].x * hr, pts[0].y * vr);
@@ -148,15 +150,21 @@
                   let cx = c.x * hr;
                   cx = Math.max(w / 2 + 2, Math.min(cx, maxX - w / 2 - 2));
                   const gap = (s.bold ? 30 : 22) * vr;
-                  const y1 = s.below ? (c.y * vr + gap) : (c.y * vr - gap - TH * vr);
-                  const box = { x1: cx - w / 2 - PAD * hr, x2: cx + w / 2 + PAD * hr, y1: y1 - PAD * vr, y2: y1 + TH * vr + PAD * vr };
-                  if (placed.some(b2 => box.x1 < b2.x2 && box.x2 > b2.x1 && box.y1 < b2.y2 && box.y2 > b2.y1)) continue;
+                  const y0 = s.below ? (c.y * vr + gap) : (c.y * vr - gap - TH * vr);
+                  // 标签碰撞时沿竖直方向错位堆叠，永不丢弃（用户要求字不因挤压消失）
+                  let ly = y0, shift = 0, box;
+                  do {
+                    box = { x1: cx - w / 2 - PAD * hr, x2: cx + w / 2 + PAD * hr, y1: ly - PAD * vr, y2: ly + TH * vr + PAD * vr };
+                    if (!placed.some(b2 => box.x1 < b2.x2 && box.x2 > b2.x1 && box.y1 < b2.y2 && box.y2 > b2.y1)) break;
+                    shift++;
+                    ly = y0 + (s.below ? 1 : -1) * shift * (TH + 5) * vr;
+                  } while (shift < 10);
                   placed.push(box);
                   ctx.fillStyle = 'rgba(13,17,23,0.72)';
-                  ctx.fillRect(cx - w / 2 - 2 * hr, y1 - 1 * vr, w + 4 * hr, TH * vr + 2 * vr);
+                  ctx.fillRect(cx - w / 2 - 2 * hr, ly - 1 * vr, w + 4 * hr, TH * vr + 2 * vr);
                   ctx.fillStyle = s.color;
                   ctx.textBaseline = s.below ? 'top' : 'bottom';
-                  ctx.fillText(s.text, cx, s.below ? y1 : y1 + TH * vr);
+                  ctx.fillText(s.text, cx, s.below ? ly : ly + TH * vr);
                 }
               }
             }
