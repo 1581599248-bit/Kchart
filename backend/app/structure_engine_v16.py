@@ -37,7 +37,7 @@ BG_ZZ_MULT, TR_ZZ_MULT = 4.5, 2.2
 DUAL_TOL_IDX = 0.03        # 两峰/谷价差容忍（低波：指数等）
 DUAL_TOL_VOL = 0.05        # 两峰/谷价差容忍（高波个股）
 DUAL_GAP_MIN, DUAL_GAP_MAX = 20, 130   # 交易级：1-6 个月；>130 不命名
-DUAL_GAP_BG = (60, 340)                # 背景级：跨季大双顶/底（如 2024 双底）
+DUAL_GAP_BG = (40, 340)                # 背景级：跨季大双顶/底（如 2024 双底、2026-03→05 大M顶）
 DUAL_DEPTH_PCT = 0.05      # 中间谷/峰深度（相对峰/谷价）
 DUAL_DEPTH_ATR = 3.0       # 或 >= 3 倍 ATR
 PRIOR_TREND_PCT = 0.08     # 前置趋势幅度
@@ -64,6 +64,9 @@ MAX_PATTERN_EVENTS = 4
 MAX_INDICATOR_EVENTS = 5
 MIN_REVERSAL_BARS = 75     # 兼容旧 CI 断言：反转结构全程最小根数
 PATTERN_OVERLAP_LIMIT = 0.5
+
+# ---------------- 标注范围 ----------------
+MIN_ANNOTATION_DATE = "2020-03-01"   # 数据从 2020-01 起，但所有分析注释从 2020-03 开始
 
 # ---------------- RSI 极值 ----------------
 RSI_OB, RSI_OS = 90.0, 10.0
@@ -842,16 +845,12 @@ def analyze(df: pd.DataFrame, timeframe: str = "1d", asset_kind: str = "equity")
     structures = find_structures(d)
     pattern_events = pattern_annotations(d, structures)
     retest_events = _neckline_retests(d, structures)
-    indicator_events = _select_indicator_events(
-        rsi_extreme_signals(d) + macd_divergence_signals(d))
-    trend_events = ema_cross_signals(d)
-    wave = wave_path_annotation(d)
-    pivots = piv_mod.find_pivots(d)
-    fib_events = _filter_fibonacci(fibonacci_history.find_fibonacci_touches(d, pivots))
-    harmonic_events = harmonics_history.find_harmonic_annotations(d, pivots)[-2:]
-    annotations = _clean(
-        pattern_events + retest_events + indicator_events + trend_events
-        + ([wave] if wave else []) + fib_events + harmonic_events)
+    # 当前阶段死磕 K线结构：只输出结构标注（描摹/颈线/确认星标/回测颈线），
+    # RSI/MACD/EMA/斐波那契/谐波/小波段 等其余信号一律屏蔽，不出现在图上。
+    annotations = _clean(pattern_events + retest_events)
+    # 数据从 2020-01 起，但所有分析注释从 2020-03 开始（之前仅作指标/均线预热）
+    annotations = [a for a in annotations
+                   if _date(d, int(a.get("bar_idx", 0))) >= MIN_ANNOTATION_DATE]
 
     return {
         "annotations": annotations,
@@ -863,11 +862,11 @@ def analyze(df: pd.DataFrame, timeframe: str = "1d", asset_kind: str = "equity")
             "structures_displayed": len(structures),
             "structure_families": sorted({e["kind"] for e in structures}),
             "structure_scales": sorted({e["scale"] for e in structures}),
-            "indicator_events": len(indicator_events),
-            "ema_cross_events": len(trend_events),
+            "indicator_events": 0,
+            "ema_cross_events": 0,
             "neckline_retest_events": len(retest_events),
-            "fibonacci_events": len(fib_events),
-            "harmonic_events": len(harmonic_events),
+            "fibonacci_events": 0,
+            "harmonic_events": 0,
             "causal": True,
             "selection": "background_first_strict_geometry_right_confirmed",
         },
