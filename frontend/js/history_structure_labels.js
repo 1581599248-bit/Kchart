@@ -15,7 +15,8 @@
     const renderer = {
       draw(target) {
         if (view.quiet || !Array.isArray(view.annotations)) return;
-        const labels = view.annotations.filter(a => a.trace_only && a.history_label);
+        // 所有结构描摹末端都显示名称（含构筑中的前瞻结构）
+        const labels = view.annotations.filter(a => a.trace_only);
         if (!labels.length) return;
 
         target.useBitmapCoordinateSpace(scope => {
