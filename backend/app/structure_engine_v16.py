@@ -409,9 +409,12 @@ def find_structures(df: pd.DataFrame) -> list[dict]:
     ]
     # 生命周期：流产构筑剔除；活跃结构（构筑中+未达标已确认）优先于历史结构
     pool = [x for x in (_lifecycle(df, e) for e in bg_events + kept_tr) if x is not None]
-    pool.sort(key=lambda e: (e["active"], e["scale"] == "background", e["score"],
-                             e["confirm_idx"] or e["end_idx"]), reverse=True)
-    # 同方向同区域去重：一个区域只讲一个故事，保留更优者（活跃/大级别/高分优先）
+    # 展示排序：活跃优先，其次按确认/结束时间新近度，大级别与分数作 tie-break。
+    # 大级别优先体现在识别与抑制（上文 kept_tr），展示层则让 2026 年的近期结构
+    # 优先于 2021/2022 年的远古历史结构——近期结构对前瞻与复盘都更有价值。
+    pool.sort(key=lambda e: (e["active"], e["confirm_idx"] or e["end_idx"],
+                             e["scale"] == "background", e["score"]), reverse=True)
+    # 同方向同区域去重：一个区域只讲一个故事，保留更优者（活跃/近期/大级别优先）
     selected: list[dict] = []
     for e in pool:
         if any(e["direction"] == s["direction"] and overlap(e, s) >= PATTERN_OVERLAP_LIMIT
