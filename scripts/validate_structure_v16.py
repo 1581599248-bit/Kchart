@@ -193,7 +193,24 @@ def test_new_annotations():
     dashed = [pl for pl in tr["polylines"] if pl["style"] == "dashed"]
     assert dashed and dashed[0]["points"][0]["t"] <= solid["points"][1]["t"], \
         "颈线须从左峰画起"
-    print("E 回测颈线/完整描摹(含起手腿)/级别配色 OK")
+
+    # 起手腿跨度封顶：不得超过形态自身跨度（左线不许拉成超长长线）
+    df_m = _mk_df(m)
+    dates = df_m["trade_date"].dt.strftime("%Y-%m-%d").to_numpy()
+    idx_of = {d: i for i, d in enumerate(dates)}
+    i_h1, i_h2 = idx_of[sp[1]["t"]], idx_of[sp[3]["t"]]
+    assert idx_of[sp[0]["t"]] >= i_h1 - (i_h2 - i_h1), \
+        ("起手腿过长", sp[0]["t"], sp[1]["t"], sp[3]["t"])
+
+    # ★跌破颈线 必须标在第一根收盘破颈线的 K 线（而非第 2 根确认K线）
+    star = [a for a in res["annotations"]
+            if a.get("star") and "跌破颈线" in str(a["label"])][0]
+    neck = float(dashed[0]["points"][0]["p"])
+    closes = df_m["close"].to_numpy(dtype=float)
+    first = next(i for i in range(i_h2 + 1, len(df_m)) if closes[i] < neck)
+    assert int(star["bar_idx"]) == first, \
+        ("星标应在首根破位K线", dates[int(star["bar_idx"])], dates[first])
+    print("E 回测颈线/完整描摹(含起手腿)/级别配色/起手腿封顶/首根破位星标 OK")
 
 
 # ---------- F. 大级别 M顶：两峰价差小、间隔约 50 根也必须识别（2026 实盘案例） ----------
