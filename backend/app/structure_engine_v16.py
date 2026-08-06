@@ -173,15 +173,30 @@ def _confirm_break(df: pd.DataFrame, start: int, direction: str,
 
 # ================= 结构识别 =================
 
-def _lead_pivot(df, pts, i, direction):
-    """起手拐点：优先取 zigzag 前一个 pivot；若形态首 pivot 已是 zigzag 起点（数据从形态附近开始），
-    用原始数据向前回溯取极值（bear 取前低 / bull 取前高），保证描摹是完整 M/W 字母。"""
-    if i > 0:
-        return pts[i - 1]
-    end = int(pts[0]["idx"])
-    start = max(0, end - 180)
+def _first_break(df, start, direction, level_at, confirm_idx):
+    """第一根收盘破颈线的 K 线（★标注位置；确认仍是连续第 2 根收盘）。"""
+    close = df["close"].to_numpy(dtype=float)
+    for idx in range(max(1, int(start)), int(confirm_idx) + 1):
+        lv = float(level_at(idx))
+        if direction == "bear" and close[idx] < lv:
+            return idx
+        if direction == "bull" and close[idx] > lv:
+            return idx
+    return int(confirm_idx)
+
+
+def _lead_pivot(df, pts, i, direction, span):
+    """起手拐点：取 zigzag 前一个 pivot；缺失或太远（超过形态自身跨度）时，
+    在首 pivot 前 span 根窗口内取极值（bear 取前低 / bull 取前高）。
+    起手腿长度与形态自身腿相当——M/W 字母比例协调，不画超长左线。"""
+    end = int(pts[i]["idx"])
+    cap = max(int(span), 30)
+    cand = pts[i - 1] if i > 0 else None
+    if cand is not None and 0 < end - int(cand["idx"]) <= cap:
+        return cand
+    start = max(0, end - cap)
     if end <= start:
-        return None
+        return cand
     if direction == "bear":
         j = start + int(np.argmin(df["low"].to_numpy(dtype=float)[start:end]))
         return {"idx": j, "price": float(df["low"].iloc[j])}
@@ -190,7 +205,7 @@ def _lead_pivot(df, pts, i, direction):
 
 
 def _mk_event(df, kind, direction, scale, pts, neckline, target, invalidation,
-              confirm_idx, status, note, lead=None) -> dict:
+              confirm_idx, status, note, lead=None, first_break=None) -> dict:
     """统一构造结构事件；trace = 起手腿 + pivot 折线 + 突破腿（完整字母）+ 颈线（虚线）。
 
     lead = 形态前的上一个 zigzag 拐点（M 的起手升腿 / W 的起手跌腿），
@@ -226,6 +241,7 @@ def _mk_event(df, kind, direction, scale, pts, neckline, target, invalidation,
         "kind": kind, "name": names[kind], "direction": direction, "scale": scale,
         "start_idx": start_idx, "end_idx": end_idx,
         "confirm_idx": int(confirm_idx) if confirm_idx is not None else None,
+        "first_break_idx": int(first_break) if first_break is not None else None,
         "status": status, "key_levels": {
             "neckline": round(float(neckline[0][1]), 4) if neckline else None,
             "measure_target": round(float(target), 4) if _finite(target) else None,
@@ -275,8 +291,10 @@ def _dual(df: pd.DataFrame, zz: pd.DataFrame, direction: str, scale: str) -> lis
         invalidation = max(p1, p2) if direction == "bear" else min(p1, p2)
         target = (level - depth) if direction == "bear" else (level + depth)
         start_confirm = max(i2 + 1, int(b["confirmed_at_idx"]))
-        confirm = _confirm_break(df, start_confirm, direction,
-                                 lambda _i, lv=level: lv, invalidation)
+        level_fn = lambda _i, lv=level: lv  # noqa: E731
+        confirm = _confirm_break(df, start_confirm, direction, level_fn, invalidation)
+        first_break = (_first_break(df, start_confirm, direction, level_fn, confirm)
+                       if confirm is not None else None)
         status = "confirmed" if confirm is not None else "forming"
         if status == "forming":
             # 构筑中但价格已反向收复失效点 → 形态流产，不标注
@@ -300,7 +318,8 @@ def _dual(df: pd.DataFrame, zz: pd.DataFrame, direction: str, scale: str) -> lis
             df, kind, direction, scale, [a, m, b],
             ((i1, level), (confirm if confirm is not None else len(df) - 1, level)),
             target, invalidation, confirm, status, note,
-            lead=_lead_pivot(df, pts, i, direction)))
+            lead=_lead_pivot(df, pts, i, direction, gap),
+            first_break=first_break))
     return events
 
 
@@ -368,6 +387,8 @@ def _hs(df: pd.DataFrame, zz: pd.DataFrame, direction: str, scale: str) -> list[
         target = (level_at(i_rs) - depth) if direction == "bear" else (level_at(i_rs) + depth)
         start_confirm = max(i_rs + 1, int(rs["confirmed_at_idx"]))
         confirm = _confirm_break(df, start_confirm, direction, level_at, invalidation)
+        first_break = (_first_break(df, start_confirm, direction, level_at, confirm)
+                       if confirm is not None else None)
         status = "confirmed" if confirm is not None else "forming"
         if status == "forming":
             last_close = float(df["close"].iloc[-1])
@@ -391,7 +412,8 @@ def _hs(df: pd.DataFrame, zz: pd.DataFrame, direction: str, scale: str) -> list[
             df, kind, direction, scale, [ls, t1, hd, t2, rs],
             ((i_ls, level_at(i_ls)), (confirm if confirm is not None else len(df) - 1, neck_now)),
             target, invalidation, confirm, status, note,
-            lead=_lead_pivot(df, pts, i, direction)))
+            lead=_lead_pivot(df, pts, i, direction, i_rs - i_ls),
+            first_break=first_break))
     return events
 
 
@@ -735,7 +757,7 @@ def pattern_annotations(df: pd.DataFrame, structures: list[dict]) -> list[dict]:
             "structure_id": sid,
         })
         if not forming:
-            c = int(e["confirm_idx"])
+            c = int(e.get("first_break_idx") or e["confirm_idx"])
             out.append({
                 "bar_idx": c,
                 "price": float(df["low" if direction == "bull" else "high"].iloc[c]),
