@@ -171,10 +171,10 @@ def test_structure_only_output():
     print(f"D 纯结构输出+注释≥{engine.MIN_ANNOTATION_DATE} OK（{len(res['annotations'])} 条标注）")
 
 
-# ---------- E. 回测颈线 / 完整描摹（突破腿 + 颈线从左峰画起）/ 级别配色 ----------
+# ---------- E. 回测颈线 / 完整描摹（起手腿+形态+突破腿）/ 级别配色 ----------
 
 def test_new_annotations():
-    # M顶 + 确认后回抽：必须标注“回测颈线”，且描摹画完整（突破腿 + 颈线从左峰画起）
+    # M顶 + 确认后回抽：必须标注“回测颈线”，且描摹画完整（起手腿 + 颈线从左峰画起）
     m = np.concatenate([_ramp(80, 90, 118), _ramp(30, 118, 104),
                         _ramp(30, 104, 117.5), _ramp(30, 117.5, 96),
                         _ramp(20, 96, 104.5), _ramp(110, 104.5, 88)])
@@ -185,12 +185,15 @@ def test_new_annotations():
     tr = [a for a in res["annotations"]
           if a.get("trace_only") and "M顶" in str(a["label"])][0]
     solid = [pl for pl in tr["polylines"] if pl["style"] == "solid"][0]
-    assert len(solid["points"]) >= 4, "折线应含突破腿（两峰一谷+确认根）"
+    assert len(solid["points"]) >= 5, "折线应含起手腿+形态+突破腿（起手拐点+两峰一谷+确认根）"
     assert solid.get("color"), "折线必须带颜色（大级别金/交易级紫）"
+    sp = solid["points"]
+    assert sp[0]["t"] < sp[1]["t"] and float(sp[0]["p"]) < float(sp[1]["p"]), \
+        "M顶须从起手低点画起，形成完整字母"
     dashed = [pl for pl in tr["polylines"] if pl["style"] == "dashed"]
-    assert dashed and dashed[0]["points"][0]["t"] <= solid["points"][0]["t"], \
+    assert dashed and dashed[0]["points"][0]["t"] <= solid["points"][1]["t"], \
         "颈线须从左峰画起"
-    print("E 回测颈线/完整描摹/级别配色 OK")
+    print("E 回测颈线/完整描摹(含起手腿)/级别配色 OK")
 
 
 # ---------- F. 大级别 M顶：两峰价差小、间隔约 50 根也必须识别（2026 实盘案例） ----------
