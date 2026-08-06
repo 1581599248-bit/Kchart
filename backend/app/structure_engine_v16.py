@@ -173,18 +173,37 @@ def _confirm_break(df: pd.DataFrame, start: int, direction: str,
 
 # ================= 结构识别 =================
 
-def _mk_event(df, kind, direction, scale, pts, neckline, target, invalidation,
-              confirm_idx, status, note) -> dict:
-    """统一构造结构事件；trace = pivot 折线（含突破腿，画完整）+ 颈线（虚线）。
+def _lead_pivot(df, pts, i, direction):
+    """起手拐点：优先取 zigzag 前一个 pivot；若形态首 pivot 已是 zigzag 起点（数据从形态附近开始），
+    用原始数据向前回溯取极值（bear 取前低 / bull 取前高），保证描摹是完整 M/W 字母。"""
+    if i > 0:
+        return pts[i - 1]
+    end = int(pts[0]["idx"])
+    start = max(0, end - 180)
+    if end <= start:
+        return None
+    if direction == "bear":
+        j = start + int(np.argmin(df["low"].to_numpy(dtype=float)[start:end]))
+        return {"idx": j, "price": float(df["low"].iloc[j])}
+    j = start + int(np.argmax(df["high"].to_numpy(dtype=float)[start:end]))
+    return {"idx": j, "price": float(df["high"].iloc[j])}
 
+
+def _mk_event(df, kind, direction, scale, pts, neckline, target, invalidation,
+              confirm_idx, status, note, lead=None) -> dict:
+    """统一构造结构事件；trace = 起手腿 + pivot 折线 + 突破腿（完整字母）+ 颈线（虚线）。
+
+    lead = 形态前的上一个 zigzag 拐点（M 的起手升腿 / W 的起手跌腿），
+    只用于描摹，不影响 start_idx/end_idx 与区间逻辑。
     颜色约定：大级别=金色，交易级（小一点的趋势）=紫色。前端按 color 渲染。
     """
     names = _NAMES
     start_idx = int(pts[0]["idx"])
     end_idx = int(pts[-1]["idx"])
     color = "#f0b90b" if scale == "background" else "#b26bff"
+    raw_pts = ([lead] if lead else []) + list(pts)
     points = [{"t": _date(df, int(p["idx"])), "p": round(float(p["price"]), 4)}
-              for p in pts]
+              for p in raw_pts]
     # 补突破腿：折线延伸到确认根收盘（构筑中则延伸到最新收盘），形态画完整
     end_i = int(confirm_idx) if confirm_idx is not None else len(df) - 1
     points.append({"t": _date(df, end_i),
@@ -280,7 +299,8 @@ def _dual(df: pd.DataFrame, zz: pd.DataFrame, direction: str, scale: str) -> lis
         events.append(_mk_event(
             df, kind, direction, scale, [a, m, b],
             ((i1, level), (confirm if confirm is not None else len(df) - 1, level)),
-            target, invalidation, confirm, status, note))
+            target, invalidation, confirm, status, note,
+            lead=_lead_pivot(df, pts, i, direction)))
     return events
 
 
@@ -370,7 +390,8 @@ def _hs(df: pd.DataFrame, zz: pd.DataFrame, direction: str, scale: str) -> list[
         events.append(_mk_event(
             df, kind, direction, scale, [ls, t1, hd, t2, rs],
             ((i_ls, level_at(i_ls)), (confirm if confirm is not None else len(df) - 1, neck_now)),
-            target, invalidation, confirm, status, note))
+            target, invalidation, confirm, status, note,
+            lead=_lead_pivot(df, pts, i, direction)))
     return events
 
 
