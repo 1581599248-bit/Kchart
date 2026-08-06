@@ -89,7 +89,7 @@
               const dead = a.active === false;
               const polylines = a.trace_only ? (a.polylines || []) : (dead ? [] : (a.polylines || []));
               for (const pl of polylines) {
-                const pts = (pl.points || []).map(pt => ({ x: toX(pt.t), y: toY(pt.p) }))
+                const pts = (pl.points || []).map(pt => ({ x: toX(pt.t), y: toY(pt.p), p: pt.p }))
                   .filter(p => p.x != null && p.y != null);
                 if (pts.length < 2) continue;
                 ctx.save();
@@ -107,6 +107,32 @@
                 ctx.moveTo(pts[0].x * hr, pts[0].y * vr);
                 for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x * hr, pts[i].y * vr);
                 ctx.stroke();
+                if (a.trace_only && pts.length >= 2) {
+                  const fmtP = (v) => v >= 1000 ? String(Math.round(v)) : (+v).toFixed(2);
+                  const maxX = scope.bitmapSize.width, maxY = scope.bitmapSize.height;
+                  if (pl.style === 'dashed') {
+                    // 颈线数值标在虚线右端：空头在下方，多头在上方，不飞出图
+                    const rp = pts[pts.length - 1];
+                    ctx.font = (8.5 * hr) + "px 'Trebuchet MS', sans-serif";
+                    ctx.fillStyle = pl.color || GOLD;
+                    ctx.textAlign = 'right';
+                    ctx.textBaseline = a.direction === 'bear' ? 'top' : 'bottom';
+                    const ny = Math.max(10 * vr, Math.min(rp.y * vr + (a.direction === 'bear' ? 3 : -3) * vr, maxY - 10 * vr));
+                    ctx.fillText('颈线 ' + fmtP(rp.p), Math.min(rp.x * hr - 4 * hr, maxX - 4 * hr), ny);
+                    ctx.textAlign = 'center';
+                  } else if (pl.style === 'solid' && pts.length >= 4) {
+                    // 关键拐点价位：跳过起手腿端点(0)与突破腿终点(n-1)，局部高点标上方、低点标下方
+                    ctx.font = (8 * hr) + "px 'Trebuchet MS', sans-serif";
+                    ctx.fillStyle = 'rgba(139,152,182,.95)';
+                    ctx.textAlign = 'center';
+                    for (let i = 1; i < pts.length - 1; i++) {
+                      const isTop = pts[i].p >= pts[i - 1].p && pts[i].p >= pts[i + 1].p;
+                      ctx.textBaseline = isTop ? 'bottom' : 'top';
+                      const vy = Math.max(9 * vr, Math.min(pts[i].y * vr + (isTop ? -2.5 : 2.5) * vr, maxY - 2 * vr));
+                      ctx.fillText(fmtP(pts[i].p), pts[i].x * hr, vy);
+                    }
+                  }
+                }
                 ctx.restore();
               }
               const lineCol = a.star ? GOLD
