@@ -53,7 +53,7 @@
         markers.push({
           time: a.time, position: bull ? 'belowBar' : 'aboveBar',
           color: a.star ? GOLD : bull ? UP : bear ? DOWN : DIMC,
-          size: a.star ? (this.quiet ? 2 : 3) : 1,
+          size: a.star ? 2 : 1,
           shape: bull ? 'arrowUp' : bear ? 'arrowDown' : 'circle',
           text: '',
         });
@@ -85,6 +85,9 @@
             const ctx = scope.context, hr = scope.horizontalPixelRatio, vr = scope.verticalPixelRatio;
             const toX = t => self.chart.timeScale().timeToCoordinate(t);
             const toY = p => self.series.priceToCoordinate(p);
+            const cssW = scope.bitmapSize.width / hr;
+            const small = cssW < 640;   // 窄屏（手机）字号再降一档，但永不消失
+            const frameBoxes = [];      // 本帧全部占位盒：描摹标签 + 文字标签共用碰撞池
             for (const a of self.annotations) {
               const dead = a.active === false;
               const polylines = a.trace_only ? (a.polylines || []) : (dead ? [] : (a.polylines || []));
@@ -110,25 +113,41 @@
                 if (a.trace_only && pts.length >= 2) {
                   const fmtP = (v) => v >= 1000 ? String(Math.round(v)) : (+v).toFixed(2);
                   const maxX = scope.bitmapSize.width, maxY = scope.bitmapSize.height;
+                  const chip = (text, cx, cy, baseline) => {
+                    const w = ctx.measureText(text).width;
+                    const h = 9 * vr;
+                    const x1 = ctx.textAlign === 'right' ? cx - w : ctx.textAlign === 'center' ? cx - w / 2 : cx;
+                    const y1 = baseline === 'top' ? cy : baseline === 'bottom' ? cy - h : cy - h / 2;
+                    ctx.fillStyle = 'rgba(13,17,23,0.72)';
+                    ctx.fillRect(x1 - 1.5 * hr, y1 - 1 * vr, w + 3 * hr, h + 2 * vr);
+                    frameBoxes.push({ x1: x1 - 2 * hr, x2: x1 + w + 2 * hr, y1: y1 - 2 * vr, y2: y1 + h + 2 * vr });
+                  };
                   if (pl.style === 'dashed') {
                     // 颈线数值标在虚线右端：空头在下方，多头在上方，不飞出图
                     const rp = pts[pts.length - 1];
-                    ctx.font = (8.5 * hr) + "px 'Trebuchet MS', sans-serif";
-                    ctx.fillStyle = pl.color || GOLD;
+                    ctx.font = ((small ? 7.5 : 8.5) * hr) + "px 'Trebuchet MS', sans-serif";
                     ctx.textAlign = 'right';
                     ctx.textBaseline = a.direction === 'bear' ? 'top' : 'bottom';
                     const ny = Math.max(10 * vr, Math.min(rp.y * vr + (a.direction === 'bear' ? 3 : -3) * vr, maxY - 10 * vr));
-                    ctx.fillText('颈线 ' + fmtP(rp.p), Math.min(rp.x * hr - 4 * hr, maxX - 4 * hr), ny);
+                    const nx = Math.min(rp.x * hr - 4 * hr, maxX - 4 * hr);
+                    chip('颈线 ' + fmtP(rp.p), nx, ny, ctx.textBaseline);
+                    ctx.fillStyle = pl.color || GOLD;
+                    ctx.fillText('颈线 ' + fmtP(rp.p), nx, ny);
                     ctx.textAlign = 'center';
                   } else if (pl.style === 'solid' && pts.length >= 4) {
-                    // 关键拐点价位：跳过起手腿端点(0)与突破腿终点(n-1)，局部高点标上方、低点标下方
-                    ctx.font = (8 * hr) + "px 'Trebuchet MS', sans-serif";
-                    ctx.fillStyle = 'rgba(139,152,182,.95)';
+                    // 关键拐点价位：跳过起手腿端点(0)与突破腿终点(n-1)；与颈线同值的拐点（中间谷/峰）
+                    // 不重复标价（颈线标签已携带该数值）——否则两字重叠成"颈线04003"之类的叠影
+                    const neckPl = (a.polylines || []).find(q => q.style === 'dashed');
+                    const neckP = neckPl && neckPl.points && neckPl.points.length ? +neckPl.points[0].p : null;
+                    ctx.font = ((small ? 7 : 8) * hr) + "px 'Trebuchet MS', sans-serif";
                     ctx.textAlign = 'center';
                     for (let i = 1; i < pts.length - 1; i++) {
+                      if (neckP != null && Math.abs(pts[i].p - neckP) / neckP < 0.002) continue;
                       const isTop = pts[i].p >= pts[i - 1].p && pts[i].p >= pts[i + 1].p;
                       ctx.textBaseline = isTop ? 'bottom' : 'top';
                       const vy = Math.max(9 * vr, Math.min(pts[i].y * vr + (isTop ? -2.5 : 2.5) * vr, maxY - 2 * vr));
+                      chip(fmtP(pts[i].p), pts[i].x * hr, vy, ctx.textBaseline);
+                      ctx.fillStyle = 'rgba(139,152,182,.95)';
                       ctx.fillText(fmtP(pts[i].p), pts[i].x * hr, vy);
                     }
                   }
@@ -172,9 +191,9 @@
                 }
                 cand.sort((p, q) => p.spec.prio - q.spec.prio || p.x - q.x);
                 ctx.textAlign = 'center';
-                const PAD = 4, TH = 12, placed = [], maxX = scope.bitmapSize.width;
+                const PAD = 4, TH = 12, placed = frameBoxes, maxX = scope.bitmapSize.width;
                 for (const c of cand) {
-                  const s = c.spec, px = s.bold ? 10 : 9;
+                  const s = c.spec, px = small ? (s.bold ? 9 : 8) : (s.bold ? 10 : 9);
                   ctx.font = (s.bold ? 'bold ' : '') + (px * hr) + "px 'Trebuchet MS', sans-serif";
                   const w = ctx.measureText(s.text).width;
                   let cx = c.x * hr;
@@ -209,6 +228,7 @@
                 }
               }
             }
+            self._placedBoxes = frameBoxes;
           });
         },
       };
