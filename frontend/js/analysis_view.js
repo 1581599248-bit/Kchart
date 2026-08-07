@@ -53,7 +53,8 @@
         markers.push({
           time: a.time, position: bull ? 'belowBar' : 'aboveBar',
           color: a.star ? GOLD : bull ? UP : bear ? DOWN : DIMC,
-          size: a.star ? 2 : 1,
+          // 箭头统一最小号：星标与非星标都不抢戏，★已在文字标签里
+          size: 1,
           shape: bull ? 'arrowUp' : bear ? 'arrowDown' : 'circle',
           text: '',
         });
@@ -115,7 +116,7 @@
                   const maxX = scope.bitmapSize.width, maxY = scope.bitmapSize.height;
                   const chip = (text, cx, cy, baseline) => {
                     const w = ctx.measureText(text).width;
-                    const h = 9 * vr;
+                    const h = 8 * vr;
                     const x1 = ctx.textAlign === 'right' ? cx - w : ctx.textAlign === 'center' ? cx - w / 2 : cx;
                     const y1 = baseline === 'top' ? cy : baseline === 'bottom' ? cy - h : cy - h / 2;
                     ctx.fillStyle = 'rgba(13,17,23,0.72)';
@@ -125,7 +126,7 @@
                   if (pl.style === 'dashed') {
                     // 颈线数值标在虚线右端：空头在下方，多头在上方，不飞出图
                     const rp = pts[pts.length - 1];
-                    ctx.font = ((small ? 7.5 : 8.5) * hr) + "px 'Trebuchet MS', sans-serif";
+                    ctx.font = ((small ? 6.5 : 7.5) * hr) + "px 'Trebuchet MS', sans-serif";
                     ctx.textAlign = 'right';
                     ctx.textBaseline = a.direction === 'bear' ? 'top' : 'bottom';
                     const ny = Math.max(10 * vr, Math.min(rp.y * vr + (a.direction === 'bear' ? 3 : -3) * vr, maxY - 10 * vr));
@@ -139,7 +140,7 @@
                     // 不重复标价（颈线标签已携带该数值）——否则两字重叠成"颈线04003"之类的叠影
                     const neckPl = (a.polylines || []).find(q => q.style === 'dashed');
                     const neckP = neckPl && neckPl.points && neckPl.points.length ? +neckPl.points[0].p : null;
-                    ctx.font = ((small ? 7 : 8) * hr) + "px 'Trebuchet MS', sans-serif";
+                    ctx.font = ((small ? 6.5 : 7.5) * hr) + "px 'Trebuchet MS', sans-serif";
                     ctx.textAlign = 'center';
                     for (let i = 1; i < pts.length - 1; i++) {
                       if (neckP != null && Math.abs(pts[i].p - neckP) / neckP < 0.002) continue;
@@ -182,8 +183,10 @@
                   if (a.trace_only || a.time < vrng.from || a.time > vrng.to) continue;
                   const x = toX(a.time);
                   const b = self._barByTime ? self._barByTime.get(a.time) : null;
-                  const anchorP = a.price != null ? a.price
-                    : b ? (a.direction === 'bull' ? b.low : b.high) : null;
+                  // 锚定到箭头针对的那根 K 线本体：空头取最高、多头取最低，
+                  // 标签贴着箭头走，不漂到别的价位/别的 K 线上
+                  const anchorP = b ? (a.direction === 'bull' ? b.low : b.high)
+                    : (a.price != null ? a.price : null);
                   if (x == null || anchorP == null) continue;
                   const y = toY(anchorP);
                   if (y == null) continue;
@@ -191,14 +194,15 @@
                 }
                 cand.sort((p, q) => p.spec.prio - q.spec.prio || p.x - q.x);
                 ctx.textAlign = 'center';
-                const PAD = 4, TH = 12, placed = frameBoxes, maxX = scope.bitmapSize.width;
+                const PAD = 3, TH = 10, placed = frameBoxes, maxX = scope.bitmapSize.width;
                 for (const c of cand) {
-                  const s = c.spec, px = small ? (s.bold ? 9 : 8) : (s.bold ? 10 : 9);
+                  // 整体再小一号：桌面 8.5/7.5px，手机 7.5/7px —— 小但不消失
+                  const s = c.spec, px = small ? (s.bold ? 7.5 : 7) : (s.bold ? 8.5 : 7.5);
                   ctx.font = (s.bold ? 'bold ' : '') + (px * hr) + "px 'Trebuchet MS', sans-serif";
                   const w = ctx.measureText(s.text).width;
                   let cx = c.x * hr;
                   cx = Math.max(w / 2 + 2, Math.min(cx, maxX - w / 2 - 2));
-                  const gap = (s.bold ? 24 : 17) * vr;
+                  const gap = (s.bold ? 17 : 13) * vr;
                   const y0 = s.below ? (c.y * vr + gap) : (c.y * vr - gap - TH * vr);
                   // 标签碰撞：首选侧最多 3 层，再换对侧最多 3 层；实在没空位就取重叠最少
                   // 的位置——永不丢弃（用户要求字不因挤压消失），同时钳在图区内不飞天
@@ -211,7 +215,7 @@
                     const base = side === 0 ? y0 : y0flip;
                     const dir = (side === 0 ? s.below : !s.below) ? 1 : -1;
                     for (let shift = 0; shift <= 3; shift++) {
-                      let candY = base + dir * shift * (TH + 3) * vr;
+                      let candY = base + dir * shift * (TH + 2) * vr;
                       candY = Math.max(2, Math.min(candY, paneH - (TH + 2) * vr - 2));
                       const h = hits(mkBox(candY));
                       if (h === 0) { ly = candY; break; }
