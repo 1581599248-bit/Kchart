@@ -39,7 +39,7 @@
 
           ctx.textAlign = 'center';
           const cssW = scope.bitmapSize.width / hr;
-          ctx.font = `bold ${(cssW < 640 ? 9 : 10) * hr}px 'Trebuchet MS', sans-serif`;
+          ctx.font = `bold ${(cssW < 640 ? 7.5 : 8.5) * hr}px 'Trebuchet MS', sans-serif`;
           // 与主标注层共用占位盒（本层在其后绘制）：结构名称不再压住 ★破位/回测 等标签
           const placed = (view._placedBoxes || []).slice();
           for (const row of rows) {
